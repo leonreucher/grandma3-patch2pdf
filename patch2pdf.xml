@@ -1,0 +1,6 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<GMA3 DataVersion="2.0.2.0">
+	<Plugin Index="1" Name="Patch2PDF" Path="" Version="1.0.0.0" Author="Leon Reucher">
+		<ComponentLua Index="1" FileName="patch2pdf.lua" />
+	</Plugin>
+</GMA3>

@@ -537,16 +537,18 @@ local function Main(displayHandle,argument)
 
 	-- Get currently connected storage devices
 	local drives = Root().Temp.DriveCollect
+	local usbConnected = false
 
     for _, drive in ipairs(drives) do
+		idCounter = idCounter + 1
         if drive.drivetype ~= "OldVersion" and drive.drivetype == "Removeable" then 
-			idCounter = idCounter + 1
+			usbConnected = true
             selectors[2].values[drive.name] = idCounter
             selectors[2].selectedValue = idCounter
         end
     end
 
-    if idCounter == 0 then
+    if usbConnected == false then
 		local res =
         MessageBox(
 			{
