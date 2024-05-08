@@ -16,8 +16,11 @@ USB path for plugin files:
 ## Credits ##
 The creation of the PDF document is based on the code from https://github.com/catseye/pdf.lua.
 
-## Disclaimer ##
+## Known limitations ##
+Currently all stages in the patch are being exported - it is planned to add a filter option for selecting only the stages which should be exported. 
 
 Only tested on GrandMA3 onPC version 2.0.2.0 on MacOS - I am not sure if the plugin is also working on consoles - please give a try and report :)
+
+## Disclaimer ##
 
 The project is delivered as is and there is no warranty that the plugin is working fine. This project is open source and has nothing to do with the MA Lighting GmbH coorperation. 
