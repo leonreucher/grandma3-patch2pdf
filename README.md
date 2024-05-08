@@ -10,6 +10,9 @@ This plugin is pretty new and currently in beta testing - at this stage of devel
 
 Download the [latest release](https://github.com/leonreucher/grandma3-patch2pdf/releases/latest) and copy the two files from the archive to your GrandMA3 installation or onto an USB device. In GrandMA3 import the files from the plugins pool.
 
+USB path for plugin files: 
+/grandMA3/gma3_library/datapools/plugins
+
 ## Credits ##
 The creation of the PDF document is based on the code from https://github.com/catseye/pdf.lua.
 
