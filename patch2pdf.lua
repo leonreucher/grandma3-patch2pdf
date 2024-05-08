@@ -507,9 +507,6 @@ PDF.new = function()
 	return pdf
 end
 
-local softwareVersion = Version()
-local platform = HostType()
-
 local documentTitle = "GrandMA3 Patch Export"
 local footerNotice = "GrandMA3 - Patch2PDF"
 
@@ -523,10 +520,11 @@ local xPosPatch = 520
 
 local yPosHeaderRow = 600
 
-local datetime = os.date("Created at: %d.%m.%Y %H:%M")
-local fileNameSuggestion = os.date("patch_export_%d-%m-%Y-%H-%M")
 
 local function Main(displayHandle,argument)
+	local datetime = os.date("Created at: %d.%m.%Y %H:%M")
+	local fileNameSuggestion = os.date("patch_export_%d-%m-%Y-%H-%M")
+	local softwareVersion = Version()
 
     local selectors = {
 		{ name="Skip unpatched", selectedValue=1, values={["No"]=1,["Yes"]=2}, type=0},
