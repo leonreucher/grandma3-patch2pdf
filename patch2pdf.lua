@@ -1,4 +1,6 @@
--- Define the PDF class
+-- PDF creation part
+
+
 PDF = {}
 PDF.new = function()
 	local pdf = {}		-- instance variable
@@ -507,6 +509,8 @@ PDF.new = function()
 	return pdf
 end
 
+-- Patch2PDF main plugin part
+
 local documentTitle = "GrandMA3 Patch Export"
 local footerNotice = "GrandMA3 - Patch2PDF"
 
@@ -520,7 +524,6 @@ local xPosPatch = 520
 
 local yPosHeaderRow = 600
 
-
 local function Main(displayHandle,argument)
 	local datetime = os.date("Created at: %d.%m.%Y %H:%M")
 	local fileNameSuggestion = os.date("patch_export_%d-%m-%Y-%H-%M")
@@ -531,6 +534,7 @@ local function Main(displayHandle,argument)
         { name="Drive", values={}, type=1}
     }
 
+	-- Helper for assigning the drives in the list an ID
     local idCounter = 0
 
 	-- Get currently connected storage devices
@@ -540,12 +544,14 @@ local function Main(displayHandle,argument)
     for _, drive in ipairs(drives) do
 		idCounter = idCounter + 1
         if drive.drivetype ~= "OldVersion" and drive.drivetype == "Removeable" then 
+			-- At least one removeable storage device was found
 			usbConnected = true
             selectors[2].values[drive.name] = idCounter
             selectors[2].selectedValue = idCounter
         end
     end
 
+	-- If no removeable storage device was found, the plugin will be aborted
     if usbConnected == false then
 		local res =
         MessageBox(
@@ -601,17 +607,27 @@ local function Main(displayHandle,argument)
     local fileName = settings.inputs["PDF title"]
 	local author = settings.inputs["Author"]
 
+	-- Create a new PDF document
 	p = PDF.new()
 
 	helv = p:new_font{ name = "Helvetica"}
 	bold = p:new_font{ name = "Helvetica", weight = "-Bold"}
 
+	-- Table for holding all pages which will be created during the printing process
 	pages = {}
 
+	-- Create the initial page
 	page = p:new_page()
 	table.insert(pages, page)
 
 	page:save()
+
+
+	local paramCount = 0
+	
+	for index, universe in ipairs(Patch().DmxUniverses) do
+		paramCount = paramCount + universe.used
+	end
 
 	local textSize = 10
 	local headerSize = 22
@@ -644,6 +660,12 @@ local function Main(displayHandle,argument)
 	page:set_font(helv, textSize)
 	page:set_text_pos(20, 655)
 	page:show("Author: " .. author)
+	page:end_text()
+
+	page:begin_text()
+	page:set_font(helv, textSize)
+	page:set_text_pos(20, 640)
+	page:show("Parameters: " .. paramCount)
 	page:end_text()
 
 	page:restore()
@@ -736,6 +758,7 @@ local function Main(displayHandle,argument)
 	local currentPage = page
 	local pageCount = 1
 
+
 	-- Collect fixtures from all stages
 	for stageIndex, stage in ipairs(Patch().Stages) do
 		for _, fixture in ipairs(stage.Fixtures) do
@@ -744,6 +767,7 @@ local function Main(displayHandle,argument)
 	end
 
     for i = 2, #fixtures do
+		-- If patch is empty and skip unpatched is configured as true skip this fixture
 		if fixtures[i].patch == "" and skipUnpatched then
 			goto continue
 		end
@@ -763,19 +787,23 @@ local function Main(displayHandle,argument)
 		::continue::
     end
 
+	-- Iterate trough all created pages
 	for k,v in pairs(pages) do
+		-- Add pagination to the page
   		v:begin_text()
 		v:set_font(helv, textSize)
 		v:set_text_pos(520, 10)
 		v:show("Page " ..k.. "/" ..pageCount)
 		v:end_text()
 
+		-- Add the footer notice to the page
 		v:begin_text()
 		v:set_font(helv, textSize)
 		v:set_text_pos(20, 10)
 		v:show(footerNotice)
 		v:end_text()
 
+		-- Add the page to the document
 		v:add()
 	end
 	local storagePath = drivePath .. "/" .. fileName ..".pdf"
