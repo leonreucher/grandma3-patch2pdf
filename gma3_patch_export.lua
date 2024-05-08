@@ -510,36 +510,59 @@ end
 local softwareVersion = Version()
 local platform = HostType()
 
-local function Main(displayHandle,argument)
-	local datetime = os.date("Created at: %d.%m.%Y %H:%M")
-	local fileNameSuggestion = os.date("patch_export_%d-%m-%Y-%H-%M")
+local documentTitle = "GrandMA3 Patch Export"
+local footerNotice = "GrandMA3 - Patch2PDF"
 
-   local drives = Root().Temp.DriveCollect
+local errMsgNoUSBDevice = "Please connect a removable storage device to the system."
+
+local xPosType = 20
+local xPosID = 100
+local xPosFixtureType = 160
+local xPosFixtureName = 350
+local xPosPatch = 520
+
+local yPosHeaderRow = 600
+
+local datetime = os.date("Created at: %d.%m.%Y %H:%M")
+local fileNameSuggestion = os.date("patch_export_%d-%m-%Y-%H-%M")
+
+local function Main(displayHandle,argument)
+
     local selectors = {
-        { name="Print Author", selectedValue=2, values={["No"]=1,["Yes"]=2}, type=0},
-        { name="Print Showfile name", selectedValue=2, values={["No"]=1,["Yes"]=2}, type=0},
+		{ name="Skip unpatched", selectedValue=1, values={["No"]=1,["Yes"]=2}, type=0},
         { name="Drive", values={}, type=1}
     }
 
-    local idCounter = 0 -- Initialize ID counter
+    local idCounter = 0
+
+	-- Get currently connected storage devices
+	local drives = Root().Temp.DriveCollect
 
     for _, drive in ipairs(drives) do
-        idCounter = idCounter + 1 -- Increment ID counter
         if drive.drivetype ~= "OldVersion" and drive.drivetype == "Removeable" then 
-            Printf("ID Counter: " ..idCounter)
-            selectors[3].values[drive.name] = idCounter -- Add removable drive names with ID
-            selectors[3].selectedValue = idCounter
+			idCounter = idCounter + 1
+            selectors[2].values[drive.name] = idCounter
+            selectors[2].selectedValue = idCounter
         end
     end
 
     if idCounter == 0 then
-        ErrEcho("Please connect a removable storage device to the system.")
+		local res =
+        MessageBox(
+			{
+				title = "Messagebox example",
+				message = "Please connect a removable storage device before running the plugin.",
+				display = displayHandle.index,
+				commands = {{value = 1, name = "Ok"}}
+			}
+    	)
+        ErrEcho(errMsgNoUSBDevice)
         return
     end
 
-   
+   	local skipUnpatched = false
 
-	local res =
+	local settings =
 	MessageBox(
 	{
 		title = "Patch 2 PDF",
@@ -550,23 +573,33 @@ local function Main(displayHandle,argument)
 			{value = CurrentUser().name, name = "Author"}}
 	    ,
         selectors = selectors,
-        commands = {{value = 1, name = "Export"}, {value = 0, name = "Cancel"}},
+        commands = {{value = 1, name = "Export"}, {value = 2, name = "Cancel"}},
     }
     )
 
     local drivePath = ""
 
-    for k,v in pairs(res.selectors) do
+	if settings.result == 2 then
+		Printf("Patch2PDF plugin aborted by user.")
+		return
+	end
+
+    for k,v in pairs(settings.selectors) do
         if k == "Drive" then 
-            Printf("Drive ID: " .. v)
             drivePath = drives[v].path
         end
+		if k == "Skip unpatched" then
+			if v == 2 then
+				skipUnpatched = true
+			end
+			if v == 1 then
+				skipUnpatched = false
+			end
+		end
     end
 
-    Printf("Drive Path: " .. drivePath)
-
-    local fileName = res.inputs["PDF title"]
-	local author = res.inputs["Author"]
+    local fileName = settings.inputs["PDF title"]
+	local author = settings.inputs["Author"]
 
 	p = PDF.new()
 
@@ -580,149 +613,174 @@ local function Main(displayHandle,argument)
 
 	page:save()
 
+	local textSize = 10
+	local headerSize = 22
+
 	page:begin_text()
-	page:set_font(bold, 24)
+	page:set_font(bold, headerSize)
 	page:set_text_pos(20, 725)
-	page:show("GrandMA3 Patch Export")
+	page:show(documentTitle)
 	page:end_text()
 
-
 	page:begin_text()
-	page:set_font(helv, 12)
+	page:set_font(helv, textSize)
 	page:set_text_pos(20, 700)
 	page:show(datetime)
 	page:end_text()
 
     page:begin_text()
-	page:set_font(helv, 12)
+	page:set_font(helv, textSize)
 	page:set_text_pos(20, 685)
 	page:show("Software version: " .. softwareVersion)
 	page:end_text()
 
 	page:begin_text()
-	page:set_font(helv, 12)
+	page:set_font(helv, textSize)
 	page:set_text_pos(20, 670)
 	page:show("Showfile: " .. Root().manetsocket.showfile)
 	page:end_text()
 
 	page:begin_text()
-	page:set_font(helv, 12)
+	page:set_font(helv, textSize)
 	page:set_text_pos(20, 655)
 	page:show("Author: " .. author)
 	page:end_text()
 
-
 	page:restore()
 
-	page:begin_text()
-	page:set_font(bold, 12)
-	page:set_text_pos(20, 600)
-	page:show("ID Type")
-	page:end_text()
+	function printTableHeader(page, yPos)
+		page:begin_text()
+		page:set_font(bold, textSize)
+		page:set_text_pos(xPosType, yPos)
+		page:show("Type")
+		page:end_text()
 
-	page:begin_text()
-	page:set_font(bold, 12)
-	page:set_text_pos(100, 600)
-	page:show("ID")
-	page:end_text()
+		page:begin_text()
+		page:set_font(bold, textSize)
+		page:set_text_pos(xPosID, yPos)
+		page:show("ID")
+		page:end_text()
 
-	page:begin_text()
-	page:set_font(bold, 12)
-	page:set_text_pos(160, 600)
-	page:show("Fixture Name")
-	page:end_text()
+		page:begin_text()
+		page:set_font(bold, textSize)
+		page:set_text_pos(xPosFixtureType, yPos)
+		page:show("Fixture Type")
+		page:end_text()
 
-	page:begin_text()
-	page:set_font(bold, 12)
-	page:set_text_pos(350, 600)
-	page:show("Fixture Type")
-	page:end_text()
+		page:begin_text()
+		page:set_font(bold, textSize)
+		page:set_text_pos(xPosFixtureName, yPos)
+		page:show("Fixture Name")
+		page:end_text()
 
-	page:begin_text()
-	page:set_font(bold, 12)
-	page:set_text_pos(520, 600)
-	page:show("Patch")
-	page:end_text()
+		page:begin_text()
+		page:set_font(bold, textSize)
+		page:set_text_pos(xPosPatch, yPos)
+		page:show("U.Addr")
+		page:end_text()
 
-	page:setrgbcolor("stroke", 0, 0, 0)
-	page:moveto(20, 590)
-	page:lineto(590, 590)
-	page:stroke()
-	local fixtures = Patch().Stages[1].Fixtures
-	local firstY = 570
+		page:setrgbcolor("stroke", 0, 0, 0)
+		page:moveto(20, yPos-10)
+		page:lineto(590, yPos-10)
+		page:stroke()
+	end
+
+	printTableHeader(page, yPosHeaderRow)
+	
+
+	function printFixtureRow(page, fixture, posY)
+		page:begin_text()
+		page:set_font(helv, textSize)
+		page:set_text_pos(xPosType, posY)
+		page:show(fixture.idtype)
+		page:end_text()
+
+		page:begin_text()
+		page:set_font(helv, textSize)
+		page:set_text_pos(xPosID, posY)
+		page:show(fixture.fid)
+		page:end_text()
+
+		page:begin_text()
+		page:set_font(helv, textSize)
+		page:set_text_pos(xPosFixtureType, posY)
+		if fixture.fixturetype ~= nil then
+			page:show(fixture.fixturetype.name)
+		else
+			page:show("-")
+		end
+		page:end_text()
+
+		page:begin_text()
+		page:set_font(helv, textSize)
+		page:set_text_pos(xPosFixtureName, posY)
+		page:show(fixture.name)
+		page:end_text()
+
+		page:begin_text()
+		page:set_font(helv, textSize)
+		page:set_text_pos(xPosPatch, posY)
+		page:show(fixture.patch)
+		page:end_text()
+
+		page:setrgbcolor("stroke", 0.8, 0.8, 0.8)
+		page:moveto(20, posY-10)
+		page:lineto(590, posY-10)
+		page:stroke()
+	end
+
+	local fixtures = {}
+	local currentY = 570
 	local nextLine = 30
 
 	local currentPage = page
 	local pageCount = 1
 
-	for stage = 1, #Patch().Stages do
-		
-		Printf("Stage: " .. Patch().Stages[stage].name)
-	end
-    for i = 2, #fixtures do
-		currentPage:begin_text()
-		currentPage:set_font(helv, 12)
-		currentPage:set_text_pos(20, firstY)
-		currentPage:show(fixtures[i].idtype)
-		currentPage:end_text()
-
-		currentPage:begin_text()
-		currentPage:set_font(helv, 12)
-		currentPage:set_text_pos(100, firstY)
-		currentPage:show(fixtures[i].fid)
-		currentPage:end_text()
-
-		currentPage:begin_text()
-		currentPage:set_font(helv, 12)
-		currentPage:set_text_pos(160, firstY)
-		currentPage:show(fixtures[i].name)
-		currentPage:end_text()
-
-		currentPage:begin_text()
-		currentPage:set_font(helv, 12)
-		currentPage:set_text_pos(350, firstY)
-		if fixtures[i].fixturetype ~= nil then
-			currentPage:show(fixtures[i].fixturetype.name)
-		else
-			currentPage:show("-")
+	-- Collect fixtures from all stages
+	for stageIndex, stage in ipairs(Patch().Stages) do
+		for _, fixture in ipairs(stage.Fixtures) do
+			table.insert(fixtures, fixture)
 		end
-		currentPage:end_text()
+	end
 
-		currentPage:begin_text()
-		currentPage:set_font(helv, 12)
-		currentPage:set_text_pos(520, firstY)
-		currentPage:show(fixtures[i].patch)
-		currentPage:end_text()
+    for i = 2, #fixtures do
+		if fixtures[i].patch == "" and skipUnpatched then
+			goto continue
+		end
 
-		currentPage:setrgbcolor("stroke", 0.8, 0.8, 0.8)
-		currentPage:moveto(20, firstY-10)
-		currentPage:lineto(590, firstY-10)
-		currentPage:stroke()
+		printFixtureRow(currentPage, fixtures[i], currentY)
+		
+		currentY = currentY - nextLine
 
-		firstY = firstY - nextLine
-
-		if firstY < 50 then
-			currentPage:add()
+		if currentY < 50 then
 			local newPage = p:new_page()
 			pageCount = pageCount + 1
 			table.insert(pages, newPage)
 			currentPage = newPage
-			firstY = 750
+			printTableHeader(currentPage, 750)
+			currentY = 720
 		end
+		::continue::
     end
-
-	currentPage:add()
 
 	for k,v in pairs(pages) do
   		v:begin_text()
-		v:set_font(helv, 12)
+		v:set_font(helv, textSize)
 		v:set_text_pos(520, 10)
 		v:show("Page " ..k.. "/" ..pageCount)
 		v:end_text()
-	end
 
-	p:write(drivePath .. "/" .. fileName ..".pdf")
-	Printf("PDF created successfully.")
+		v:begin_text()
+		v:set_font(helv, textSize)
+		v:set_text_pos(20, 10)
+		v:show(footerNotice)
+		v:end_text()
+
+		v:add()
+	end
+	local storagePath = drivePath .. "/" .. fileName ..".pdf"
+	p:write(storagePath)
+	Printf("PDF created successfully at " .. storagePath)
 
 	
 end
