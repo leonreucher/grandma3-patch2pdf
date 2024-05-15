@@ -680,7 +680,7 @@ local function Main(displayHandle,argument)
 		page:begin_text()
 		page:set_font(bold, textSize)
 		page:set_text_pos(xPosID, yPos)
-		page:show("ID")
+		page:show("FID/CID")
 		page:end_text()
 
 		page:begin_text()
@@ -720,7 +720,15 @@ local function Main(displayHandle,argument)
 		page:begin_text()
 		page:set_font(helv, textSize)
 		page:set_text_pos(xPosID, posY)
-		page:show(fixture.fid)
+		if fixture.cid == "None" and fixture.fid == "None" then
+			page:show("-")
+		elseif fixture.cid == "None" then
+			page:show(fixture.fid .. "/-" )
+		elseif fixture.fid == "None" then
+			page:show("-/" .. fixture.cid)
+		else 
+			page:show(fixture.fid .. "/" .. fixture.cid)
+		end
 		page:end_text()
 
 		page:begin_text()
