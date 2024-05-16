@@ -723,10 +723,6 @@ local function Main(displayHandle,argument)
 			goto continue
 		end
 
-		if fixture.fixturetype == nil then
-			Printf(fixture:Dump())
-		end
-
 		local fid = fixture.fid or "-"
 		local cid = fixture.cid or "-"
 		if fid == "None" then fid = "-" end
