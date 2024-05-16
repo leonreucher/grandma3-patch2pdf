@@ -709,8 +709,19 @@ local function Main(displayHandle,argument)
 
 	printTableHeader(page, yPosHeaderRow)
 	
+	local currentY = 570
+	local currentPage = page
+	local pageCount = 1
+	local nextLine = 30
 
 	function printFixtureRow(page, fixture, posY)
+		if fixture.fixturetype.name == "Grouping" then
+			local children = fixture:Children()
+			for j = 1, #children do
+				printFixtureRow(currentPage, children[j], currentY)
+			end
+			goto continue
+		end
 		page:begin_text()
 		page:set_font(helv, textSize)
 		page:set_text_pos(xPosType, posY)
@@ -721,7 +732,7 @@ local function Main(displayHandle,argument)
 		page:set_font(helv, textSize)
 		page:set_text_pos(xPosID, posY)
 		if fixture.cid == "None" and fixture.fid == "None" then
-			page:show("-")
+			page:show("-/-")
 		elseif fixture.cid == "None" then
 			page:show(fixture.fid .. "/-" )
 		elseif fixture.fid == "None" then
@@ -757,15 +768,21 @@ local function Main(displayHandle,argument)
 		page:moveto(20, posY-10)
 		page:lineto(590, posY-10)
 		page:stroke()
+
+		currentY = currentY - nextLine
+
+		if currentY < 50 then
+			local newPage = p:new_page()
+			pageCount = pageCount + 1
+			table.insert(pages, newPage)
+			currentPage = newPage
+			printTableHeader(currentPage, 750)
+			currentY = 720
+		end
+		::continue::
 	end
 
 	local fixtures = {}
-	local currentY = 570
-	local nextLine = 30
-
-	local currentPage = page
-	local pageCount = 1
-
 
 	-- Collect fixtures from all stages
 	for stageIndex, stage in ipairs(Patch().Stages) do
@@ -779,19 +796,9 @@ local function Main(displayHandle,argument)
 		if fixtures[i].patch == "" and skipUnpatched then
 			goto continue
 		end
-
+		
 		printFixtureRow(currentPage, fixtures[i], currentY)
 		
-		currentY = currentY - nextLine
-
-		if currentY < 50 then
-			local newPage = p:new_page()
-			pageCount = pageCount + 1
-			table.insert(pages, newPage)
-			currentPage = newPage
-			printTableHeader(currentPage, 750)
-			currentY = 720
-		end
 		::continue::
     end
 
