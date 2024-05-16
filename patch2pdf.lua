@@ -722,6 +722,12 @@ local function Main(displayHandle,argument)
 			end
 			goto continue
 		end
+
+		local fid = fixture.fid or "-"
+		local cid = fixture.cid or "-"
+		if fid == "None" then fid = "-" end
+		if cid == "None" then cid = "-" end
+
 		page:begin_text()
 		page:set_font(helv, textSize)
 		page:set_text_pos(xPosType, posY)
@@ -731,15 +737,7 @@ local function Main(displayHandle,argument)
 		page:begin_text()
 		page:set_font(helv, textSize)
 		page:set_text_pos(xPosID, posY)
-		if fixture.cid == "None" and fixture.fid == "None" then
-			page:show("-/-")
-		elseif fixture.cid == "None" then
-			page:show(fixture.fid .. "/-" )
-		elseif fixture.fid == "None" then
-			page:show("-/" .. fixture.cid)
-		else 
-			page:show(fixture.fid .. "/" .. fixture.cid)
-		end
+		page:show(fid .. "/" .. cid)
 		page:end_text()
 
 		page:begin_text()
