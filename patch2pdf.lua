@@ -715,12 +715,16 @@ local function Main(displayHandle,argument)
 	local nextLine = 30
 
 	function printFixtureRow(page, fixture, posY)
-		if fixture.fixturetype.name == "Grouping" then
+		if (fixture.fixturetype ~= nil) and (fixture.fixturetype.name == "Grouping") then
 			local children = fixture:Children()
 			for j = 1, #children do
 				printFixtureRow(currentPage, children[j], currentY)
 			end
 			goto continue
+		end
+
+		if fixture.fixturetype == nil then
+			Printf(fixture:Dump())
 		end
 
 		local fid = fixture.fid or "-"
@@ -743,17 +747,29 @@ local function Main(displayHandle,argument)
 		page:begin_text()
 		page:set_font(helv, textSize)
 		page:set_text_pos(xPosFixtureType, posY)
-		if fixture.fixturetype ~= nil then
-			page:show(fixture.fixturetype.name)
+		if fixture.ismultipatch == true then
+			if fixture.multipatchmain.fixturetype ~= nil then
+				page:show(fixture.multipatchmain.fixturetype.name)
+			else
+				page:show("-")
+			end
 		else
-			page:show("-")
+			if fixture.fixturetype ~= nil then
+				page:show(fixture.fixturetype.name)
+			else
+				page:show("-")
+			end
 		end
 		page:end_text()
 
 		page:begin_text()
 		page:set_font(helv, textSize)
 		page:set_text_pos(xPosFixtureName, posY)
-		page:show(fixture.name)
+		if fixture.ismultipatch == true then
+			page:show(fixture.multipatchmain.name)
+		else
+			page:show(fixture.name)
+		end
 		page:end_text()
 
 		page:begin_text()
