@@ -531,7 +531,8 @@ local function Main(displayHandle,argument)
 
     local selectors = {
 		{ name="Skip unpatched", selectedValue=1, values={["No"]=1,["Yes"]=2}, type=0},
-        { name="Drive", values={}, type=1}
+        { name="Drive", values={}, type=1},
+		{ name="Export Filter", selectedValue=1, values={['Complete']=1,["Selection Only"]=2}, type=1}
     }
 
 	-- Helper for assigning the drives in the list an ID
@@ -584,6 +585,7 @@ local function Main(displayHandle,argument)
     )
 
     local drivePath = ""
+	local exportType = 1
 
 	if settings.result == 2 then
 		Printf("Patch2PDF plugin aborted by user.")
@@ -601,6 +603,9 @@ local function Main(displayHandle,argument)
 			if v == 1 then
 				skipUnpatched = false
 			end
+		end
+		if k == "Export Filter" then
+			exportType = v
 		end
     end
 
@@ -723,6 +728,10 @@ local function Main(displayHandle,argument)
 			goto continue
 		end
 
+		if (fixture.fixturetype ~= nil) and (fixture.fixturetype.name == "Universal") then
+			goto continue
+		end
+
 		local fid = fixture.fid or "-"
 		local cid = fixture.cid or "-"
 		if fid == "None" then fid = "-" end
@@ -792,16 +801,29 @@ local function Main(displayHandle,argument)
 		::continue::
 	end
 
+
 	local fixtures = {}
 
 	-- Collect fixtures from all stages
-	for stageIndex, stage in ipairs(Patch().Stages) do
-		for _, fixture in ipairs(stage.Fixtures) do
-			table.insert(fixtures, fixture)
+	if exportType == 1 then
+		for stageIndex, stage in ipairs(Patch().Stages) do
+			for _, fixture in ipairs(stage.Fixtures) do
+				table.insert(fixtures, fixture)
+			end
 		end
 	end
+	if exportType == 2 then
 
-    for i = 2, #fixtures do
+		local subfixtureIndex = SelectionFirst();
+		repeat
+			local fixtureHandle = GetSubfixture(subfixtureIndex)
+			table.insert(fixtures, fixtureHandle)
+			subfixtureIndex = SelectionNext(subfixtureIndex)
+		until not subfixtureIndex;
+	end
+
+
+    for i = 1, #fixtures do
 		-- If patch is empty and skip unpatched is configured as true skip this fixture
 		if fixtures[i].patch == "" and skipUnpatched then
 			goto continue
