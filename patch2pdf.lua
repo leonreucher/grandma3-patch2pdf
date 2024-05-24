@@ -532,7 +532,8 @@ local function Main(displayHandle,argument)
     local selectors = {
 		{ name="Skip unpatched", selectedValue=1, values={["No"]=1,["Yes"]=2}, type=0},
         { name="Drive", values={}, type=1},
-		{ name="Export Filter", selectedValue=1, values={['Complete']=1,["Selection Only"]=2}, type=1}
+		{ name="Export Filter", selectedValue=1, values={['Complete']=1,["Selection Only"]=2}, type=1},
+		{ name="Sort", selectedValue=1, values={['Patch Window Order']=1,["FID"]=2, ["DMX"]=3}, type=0}
     }
 
 	-- Helper for assigning the drives in the list an ID
@@ -586,6 +587,7 @@ local function Main(displayHandle,argument)
 
     local drivePath = ""
 	local exportType = 1
+	local sortType = 1
 
 	if settings.result == 2 then
 		Printf("Patch2PDF plugin aborted by user.")
@@ -606,6 +608,9 @@ local function Main(displayHandle,argument)
 		end
 		if k == "Export Filter" then
 			exportType = v
+		end
+		if k == "Sort" then
+			sortType = v
 		end
     end
 
@@ -720,18 +725,6 @@ local function Main(displayHandle,argument)
 	local nextLine = 30
 
 	function printFixtureRow(page, fixture, posY)
-		if (fixture.fixturetype ~= nil) and (fixture.fixturetype.name == "Grouping") then
-			local children = fixture:Children()
-			for j = 1, #children do
-				printFixtureRow(currentPage, children[j], currentY)
-			end
-			goto continue
-		end
-
-		if (fixture.fixturetype ~= nil) and (fixture.fixturetype.name == "Universal") then
-			goto continue
-		end
-
 		local fid = fixture.fid or "-"
 		local cid = fixture.cid or "-"
 		if fid == "None" then fid = "-" end
@@ -770,8 +763,9 @@ local function Main(displayHandle,argument)
 		page:begin_text()
 		page:set_font(helv, textSize)
 		page:set_text_pos(xPosFixtureName, posY)
+		-- If fixture is multi patch, check if it has a name, otherwise take the name of the parent fixture
 		if fixture.ismultipatch == true then
-			page:show(fixture.multipatchmain.name)
+			page:show(fixture.name .. "[" .. fixture.multipatchmain.name .."]")
 		else
 			page:show(fixture.name)
 		end
@@ -798,53 +792,110 @@ local function Main(displayHandle,argument)
 			printTableHeader(currentPage, 750)
 			currentY = 720
 		end
+	end
+
+	local fixturesRaw = {}
+	local cleanedFixtures = {}
+
+	-- Helper function for removing unwanted objects and disassembling fixture groupings 
+	function cleanupFixtures(fixture)
+		if (fixture.fixturetype ~= nil) and (fixture.fixturetype.name == "Grouping") then
+			local children = fixture:Children()
+			for j = 1, #children do
+				cleanupFixtures(children[j])
+			end
+			goto continue
+		end
+		-- Skip the fixture if its type is universal
+		if (fixture.fixturetype ~= nil) and (fixture.fixturetype.name == "Universal") then
+			goto continue
+		end
+		-- If fixture is a multipatch assign the dmx address of the parent fixture for correct sorting by DMX
+		if fixture.ismultipatch then
+			fixture.patch = fixture.multipatchmain.patch
+		end
+		-- Skip the fixture if not patched and skipUnpatched is enabled by the user
+		if fixture.patch == "" and skipUnpatched then
+			goto continue
+		end
+		table.insert(cleanedFixtures, fixture);
 		::continue::
 	end
 
-
-	local fixtures = {}
-
-	-- Collect fixtures from all stages
+	-- Export all fixtures
 	if exportType == 1 then
+		-- Collect all fixtures from all stages
 		for stageIndex, stage in ipairs(Patch().Stages) do
-			for _, fixture in ipairs(stage.Fixtures) do
-				table.insert(fixtures, fixture)
+			for _, fixture in ipairs(stage.fixtures) do
+				table.insert(fixturesRaw, fixture)
 			end
 		end
+		
 	end
+
+	-- Export only selected fixtures
 	if exportType == 2 then
 		if SelectionCount() <= 0 then
 			local res =
 			MessageBox(
 				{
 					title = "Patch2PDF - Error",
-					message = "No fixtures selected - please select at least one fixture and start again.",
+					message = "No fixturesRaw selected - please select at least one fixture and start again.",
 					display = displayHandle.index,
 					commands = {{value = 1, name = "Ok"}}
 				}
 			)
-        	ErrEcho("No fixtures selected to be exported")
+        	ErrEcho("No fixturesRaw selected to be exported")
 			return
 		end
+		-- Collect all currently selected fixtures
 		local subfixtureIndex = SelectionFirst();
 		repeat
 			local fixtureHandle = GetSubfixture(subfixtureIndex)
-			table.insert(fixtures, fixtureHandle)
+			table.insert(fixturesRaw, fixtureHandle)
 			subfixtureIndex = SelectionNext(subfixtureIndex)
 		until not subfixtureIndex;
 	end
 
+	for _, fixture in ipairs(fixturesRaw) do
+		cleanupFixtures(fixture)
+	end
 
-    for i = 1, #fixtures do
-		-- If patch is empty and skip unpatched is configured as true skip this fixture
-		if fixtures[i].patch == "" and skipUnpatched then
-			goto continue
-		end
-		
-		printFixtureRow(currentPage, fixtures[i], currentY)
-		
-		::continue::
-    end
+	-- Sort by Fixture ID
+	if sortType == 2 then
+		table.sort(cleanedFixtures, function(a, b)
+		local a_fid = a.fid and tonumber(a.fid) or math.huge  -- Assign -inf if fid is nil
+		local b_fid = b.fid and tonumber(b.fid) or math.huge  -- Assign -inf if fid is nil
+	
+		return a_fid < b_fid
+		end)
+	end
+
+	-- Sort by DMX address
+	if sortType == 3 then
+		table.sort(cleanedFixtures, function(a, b)
+        local a_universe, a_dmx = a.patch:match("(%d+)%.(%d+)")
+        local b_universe, b_dmx = b.patch:match("(%d+)%.(%d+)")
+
+        if a_universe == nil and b_universe == nil then
+            return false 
+        elseif a_universe == nil then
+            return false
+        elseif b_universe == nil then
+            return true
+        end
+        
+        if a_universe ~= b_universe then
+            return tonumber(a_universe) < tonumber(b_universe)
+        else
+            return tonumber(a_dmx) < tonumber(b_dmx)
+        end
+    end)
+	end
+
+    for i = 1, #cleanedFixtures do
+		printFixtureRow(currentPage, cleanedFixtures[i], currentY)
+	end
 
 	-- Iterate trough all created pages
 	for k,v in pairs(pages) do
