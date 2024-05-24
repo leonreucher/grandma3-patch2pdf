@@ -557,7 +557,7 @@ local function Main(displayHandle,argument)
 		local res =
         MessageBox(
 			{
-				title = "Messagebox example",
+				title = "Patch2PDF - Error",
 				message = "Please connect a removable storage device before running the plugin.",
 				display = displayHandle.index,
 				commands = {{value = 1, name = "Ok"}}
@@ -813,7 +813,19 @@ local function Main(displayHandle,argument)
 		end
 	end
 	if exportType == 2 then
-
+		if SelectionCount() <= 0 then
+			local res =
+			MessageBox(
+				{
+					title = "Patch2PDF - Error",
+					message = "No fixtures selected - please select at least one fixture and start again.",
+					display = displayHandle.index,
+					commands = {{value = 1, name = "Ok"}}
+				}
+			)
+        	ErrEcho("No fixtures selected to be exported")
+			return
+		end
 		local subfixtureIndex = SelectionFirst();
 		repeat
 			local fixtureHandle = GetSubfixture(subfixtureIndex)
