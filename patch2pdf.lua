@@ -517,10 +517,10 @@ local footerNotice = "GrandMA3 - Patch2PDF"
 local errMsgNoUSBDevice = "Please connect a removable storage device to the system."
 
 local xPosType = 20
-local xPosID = 100
-local xPosFixtureType = 160
-local xPosFixtureName = 350
-local xPosPatch = 520
+local xPosID = 80
+local xPosFixtureType = 140
+local xPosFixtureName = 370
+local xPosPatch = 540
 
 local yPosHeaderRow = 600
 
@@ -562,7 +562,7 @@ local function Main(displayHandle,argument)
 				title = "Patch2PDF - Error",
 				message = "Please connect a removable storage device before running the plugin.",
 				display = displayHandle.index,
-				commands = {{value = 1, name = "Ok"}}
+				commands = {{value = 1, name = "Ok"}},
 			}
     	)
         ErrEcho(errMsgNoUSBDevice)
@@ -697,7 +697,7 @@ local function Main(displayHandle,argument)
 		page:begin_text()
 		page:set_font(bold, textSize)
 		page:set_text_pos(xPosFixtureType, yPos)
-		page:show("Fixture Type")
+		page:show("Fixture Type / Fixture Mode")
 		page:end_text()
 
 		page:begin_text()
@@ -733,6 +733,7 @@ local function Main(displayHandle,argument)
 		if fid == "None" then fid = "-" end
 		if cid == "None" then cid = "-" end
 
+
 		if groupType == 2 then
 			local universe, dmx = fixture.patch:match("(%d+)%.(%d+)")
 			if universe ~= lastUniverse then
@@ -761,8 +762,8 @@ local function Main(displayHandle,argument)
 		page:end_text()
 
 		page:begin_text()
-		page:set_font(helv, textSize)
-		page:set_text_pos(xPosFixtureType, posY)
+		page:set_font(bold, textSize)
+		page:set_text_pos(xPosFixtureType, posY+9)
 		if fixture.ismultipatch == true then
 			if fixture.multipatchmain.fixturetype ~= nil then
 				page:show(fixture.multipatchmain.fixturetype.name)
@@ -772,6 +773,24 @@ local function Main(displayHandle,argument)
 		else
 			if fixture.fixturetype ~= nil then
 				page:show(fixture.fixturetype.name)
+			else
+				page:show("-")
+			end
+		end
+		page:end_text()
+
+		page:begin_text()
+		page:set_font(helv, textSize)
+		page:set_text_pos(xPosFixtureType, posY-5)
+		if fixture.ismultipatch == true then
+			if fixture.multipatchmain.fixturetype ~= nil then
+				page:show(fixture.multipatchmain.mode)
+			else
+				page:show("-")
+			end
+		else
+			if fixture.fixturetype ~= nil then
+				page:show(fixture.mode)
 			else
 				page:show("-")
 			end
