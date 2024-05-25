@@ -38,6 +38,9 @@ Only tested on GrandMA3 onPC version 2.0.2.0 on MacOS - I am not sure if the plu
 ## Disclaimer ##
 
 The project is delivered as is and there is no warranty that the plugin is working fine. This project is open source and has nothing to do with the MA Lighting GmbH coorperation. 
+
+![patch2pdf-config](https://github.com/leonreucher/grandma3-patch2pdf/assets/19686873/c622a612-5413-4b58-a439-c2756c1fdbb6)
+
 ![patch2pdf-screenshot](https://github.com/leonreucher/grandma3-patch2pdf/assets/19686873/eb05d2c0-685f-43af-93b7-957bf1082e3a)
 
 
