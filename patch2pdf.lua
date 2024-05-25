@@ -534,7 +534,8 @@ local function Main(displayHandle,argument)
         { name="Drive", values={}, type=1},
 		{ name="Export Filter", selectedValue=1, values={['Complete']=1,["Selection Only"]=2}, type=1},
 		{ name="Sort", selectedValue=1, values={['Patch Window Order']=1,["FID"]=2, ["DMX"]=3}, type=0},
-		{ name="Grouping", selectedValue=1, values={['None']=1,["Universe"]=2}, type=0}
+		{ name="Grouping", selectedValue=1, values={['None']=1,["Universe"]=2}, type=0},
+		{ name="Include Multipatch", selectedValue=1, values={["Yes"]=1,["No"]=2}, type=0},
     }
 
 	-- Helper for assigning the drives in the list an ID
@@ -590,6 +591,7 @@ local function Main(displayHandle,argument)
 	local exportType = 1
 	local sortType = 1
 	local groupType = 1
+	local includeMultipatch = 1
 
 	if settings.result == 2 then
 		Printf("Patch2PDF plugin aborted by user.")
@@ -616,6 +618,9 @@ local function Main(displayHandle,argument)
 		end
 		if k == "Grouping" then
 			groupType = v
+		end
+		if k == "Include Multipatch" then
+			includeMultipatch = v
 		end
     end
 
@@ -730,8 +735,14 @@ local function Main(displayHandle,argument)
 	function printFixtureRow(page, fixture, posY)
 		local fid = fixture.fid or "-"
 		local cid = fixture.cid or "-"
+
+		if fixture.ismultipatch then
+			fid = fixture.multipatchmain.fid or "-"
+		end
+
 		if fid == "None" then fid = "-" end
 		if cid == "None" then cid = "-" end
+		
 
 
 		if groupType == 2 then
@@ -854,6 +865,9 @@ local function Main(displayHandle,argument)
 		end
 		-- If fixture is a multipatch assign the dmx address of the parent fixture for correct sorting by DMX
 		if fixture.ismultipatch then
+			if includeMultipatch == 2 then
+				goto continue
+			end
 			fixture.patch = fixture.multipatchmain.patch
 		end
 		-- Skip the fixture if not patched and skipUnpatched is enabled by the user
@@ -913,6 +927,19 @@ local function Main(displayHandle,argument)
 		table.sort(cleanedFixtures, function(a, b)
 		local a_fid = a.fid and tonumber(a.fid) or math.huge  -- Assign -inf if fid is nil
 		local b_fid = b.fid and tonumber(b.fid) or math.huge  -- Assign -inf if fid is nil
+		if a.ismultipatch then
+			a_fid = a.multipatchmain.fid and tonumber(a.multipatchmain.fid) or math.huge
+		end
+		if b.ismultipatch then
+			b_fid = b.multipatchmain.fid and tonumber(b.multipatchmain.fid) or math.huge
+		end
+
+		if a.multipatchmain == b then
+			return false
+		end
+		if b.multipatchmain == a then
+			return true
+		end
 			
 		return a_fid < b_fid
 		end)
@@ -923,6 +950,13 @@ local function Main(displayHandle,argument)
 		table.sort(cleanedFixtures, function(a, b)
         local a_universe, a_dmx = a.patch:match("(%d+)%.(%d+)")
         local b_universe, b_dmx = b.patch:match("(%d+)%.(%d+)")
+		
+		if a.multipatchmain == b then
+			return false
+		end
+		if b.multipatchmain == a then
+			return true
+		end
 
         if a_universe == nil and b_universe == nil then
             return false 
