@@ -533,7 +533,8 @@ local function Main(displayHandle,argument)
 		{ name="Skip unpatched", selectedValue=1, values={["No"]=1,["Yes"]=2}, type=0},
         { name="Drive", values={}, type=1},
 		{ name="Export Filter", selectedValue=1, values={['Complete']=1,["Selection Only"]=2}, type=1},
-		{ name="Sort", selectedValue=1, values={['Patch Window Order']=1,["FID"]=2, ["DMX"]=3}, type=0}
+		{ name="Sort", selectedValue=1, values={['Patch Window Order']=1,["FID"]=2, ["DMX"]=3}, type=0},
+		{ name="Grouping", selectedValue=1, values={['None']=1,["Universe"]=2}, type=0}
     }
 
 	-- Helper for assigning the drives in the list an ID
@@ -588,6 +589,7 @@ local function Main(displayHandle,argument)
     local drivePath = ""
 	local exportType = 1
 	local sortType = 1
+	local groupType = 1
 
 	if settings.result == 2 then
 		Printf("Patch2PDF plugin aborted by user.")
@@ -611,6 +613,9 @@ local function Main(displayHandle,argument)
 		end
 		if k == "Sort" then
 			sortType = v
+		end
+		if k == "Grouping" then
+			groupType = v
 		end
     end
 
@@ -724,11 +729,28 @@ local function Main(displayHandle,argument)
 	local pageCount = 1
 	local nextLine = 30
 
+	local lastUniverse = 0
+
 	function printFixtureRow(page, fixture, posY)
 		local fid = fixture.fid or "-"
 		local cid = fixture.cid or "-"
 		if fid == "None" then fid = "-" end
 		if cid == "None" then cid = "-" end
+
+		if groupType == 2 then
+			local universe, dmx = fixture.patch:match("(%d+)%.(%d+)")
+			if universe ~= lastUniverse then
+				lastUniverse = universe
+				local newPage = p:new_page()
+				pageCount = pageCount + 1
+				table.insert(pages, newPage)
+				currentPage = newPage
+				printTableHeader(currentPage, 750)
+				currentY = 720
+				posY = currentY
+				page = currentPage
+			end
+		end
 
 		page:begin_text()
 		page:set_font(helv, textSize)
@@ -861,12 +883,17 @@ local function Main(displayHandle,argument)
 		cleanupFixtures(fixture)
 	end
 
+	-- If grouping by universe is selected, order the fixtures by DMX address
+	if groupType == 2 then
+		sortType = 3
+	end
+
 	-- Sort by Fixture ID
 	if sortType == 2 then
 		table.sort(cleanedFixtures, function(a, b)
 		local a_fid = a.fid and tonumber(a.fid) or math.huge  -- Assign -inf if fid is nil
 		local b_fid = b.fid and tonumber(b.fid) or math.huge  -- Assign -inf if fid is nil
-	
+			
 		return a_fid < b_fid
 		end)
 	end
@@ -887,12 +914,19 @@ local function Main(displayHandle,argument)
         
         if a_universe ~= b_universe then
             return tonumber(a_universe) < tonumber(b_universe)
+		-- dont reorder if a.patch == b.patch (multipatch fixture)
+		elseif a_universe == b_universe and a_dmx == b_dmx then
+			return false
         else
             return tonumber(a_dmx) < tonumber(b_dmx)
         end
     end)
 	end
 
+	if #cleanedFixtures > 0 then
+		local universe, dmx = cleanedFixtures[1].patch:match("(%d+)%.(%d+)")
+		lastUniverse = universe
+	end
     for i = 1, #cleanedFixtures do
 		printFixtureRow(currentPage, cleanedFixtures[i], currentY)
 	end
