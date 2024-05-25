@@ -783,14 +783,19 @@ local function Main(displayHandle,argument)
 		page:set_font(helv, textSize)
 		page:set_text_pos(xPosFixtureType, posY-5)
 		if fixture.ismultipatch == true then
-			if fixture.multipatchmain.fixturetype ~= nil then
+			if fixture.multipatchmain.fixturetype ~= nil and fixture.multipatchmain.mode ~= nil then
 				page:show(fixture.multipatchmain.mode)
 			else
 				page:show("-")
 			end
 		else
 			if fixture.fixturetype ~= nil then
-				page:show(fixture.mode)
+				if fixture.mode ~= nil then
+					page:show(fixture.mode)
+				else 
+					page:show("-")
+				end
+				
 			else
 				page:show("-")
 			end
