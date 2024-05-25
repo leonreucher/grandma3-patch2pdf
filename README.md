@@ -2,7 +2,21 @@
 
 ## Overview ##
 
-This open source projects allows users of the GrandMA3 software to export the fixture patch as an PDF file.
+This open source projects allows users of the GrandMA3 software to export the fixture patch as an PDF file to an USB thumb drive.
+
+Currently the following attributes are getting exported to the PDF file:
+- Type (Fixture, Channel, Multipatch, Houselight, etc.)
+- Fixture ID and Channel ID
+- Fixture Type and Mode
+- Fixture Name
+- Universe and Address
+
+You can sort the export by:
+- Patch Window Order
+- Fixture ID
+- DMX Address
+
+You can select to either export the whole patch or just the currently selected fixtures. Also you can choose to group the fixtures by universe - then for every universe a new page is being created. Please note that when grouping is enabled, the sorting feature is being ignored.
 
 This plugin is pretty new and currently in beta testing - at this stage of development, errors can occur: please create an issue if you find anything which is not working as intended.
 
