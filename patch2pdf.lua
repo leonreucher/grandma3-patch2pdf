@@ -638,12 +638,8 @@ local function Main(displayHandle,argument)
 	page:save()
 
 
-	local paramCount = 0
+	local paramCount = GetRTChannelCount()
 	
-	for index, universe in ipairs(Patch().DmxUniverses) do
-		paramCount = paramCount + universe.used
-	end
-
 	local textSize = 10
 	local headerSize = 22
 
