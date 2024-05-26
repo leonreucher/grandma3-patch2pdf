@@ -732,6 +732,17 @@ local function Main(displayHandle,argument)
 
 	local lastUniverse = 0
 
+	local maxFixtureTypeNameLength = 45
+	local maxFixtureNameLength = 32
+
+	function truncateString(str, max_length)
+		if #str > max_length then
+			truncatedString = str:sub(1, max_length) .. "..."
+			return truncatedString
+		else return str
+		end
+	end
+
 	function printFixtureRow(page, fixture, posY)
 		local fid = fixture.fid or "-"
 		local cid = fixture.cid or "-"
@@ -777,13 +788,13 @@ local function Main(displayHandle,argument)
 		page:set_text_pos(xPosFixtureType, posY+9)
 		if fixture.ismultipatch == true then
 			if fixture.multipatchmain.fixturetype ~= nil then
-				page:show(fixture.multipatchmain.fixturetype.name)
+				page:show(truncateString(fixture.multipatchmain.fixturetype.name, maxFixtureTypeNameLength))
 			else
 				page:show("-")
 			end
 		else
 			if fixture.fixturetype ~= nil then
-				page:show(fixture.fixturetype.name)
+				page:show(truncateString(fixture.fixturetype.name, maxFixtureTypeNameLength))
 			else
 				page:show("-")
 			end
@@ -795,14 +806,14 @@ local function Main(displayHandle,argument)
 		page:set_text_pos(xPosFixtureType, posY-5)
 		if fixture.ismultipatch == true then
 			if fixture.multipatchmain.fixturetype ~= nil and fixture.multipatchmain.mode ~= nil then
-				page:show(fixture.multipatchmain.mode)
+				page:show(truncateString(fixture.multipatchmain.mode, maxFixtureTypeNameLength))
 			else
 				page:show("-")
 			end
 		else
 			if fixture.fixturetype ~= nil then
 				if fixture.mode ~= nil then
-					page:show(fixture.mode)
+					page:show(truncateString(fixture.mode, maxFixtureTypeNameLength))
 				else 
 					page:show("-")
 				end
@@ -818,9 +829,9 @@ local function Main(displayHandle,argument)
 		page:set_text_pos(xPosFixtureName, posY)
 		-- If fixture is multi patch, check if it has a name, otherwise take the name of the parent fixture
 		if fixture.ismultipatch == true then
-			page:show(fixture.name .. "[" .. fixture.multipatchmain.name .."]")
+			page:show(truncateString(fixture.name .. "[" .. fixture.multipatchmain.name .."]", maxFixtureNameLength))
 		else
-			page:show(fixture.name)
+			page:show(truncateString(fixture.name, maxFixtureNameLength))
 		end
 		page:end_text()
 
@@ -896,7 +907,7 @@ local function Main(displayHandle,argument)
 			MessageBox(
 				{
 					title = "Patch2PDF - Error",
-					message = "No fixturesRaw selected - please select at least one fixture and start again.",
+					message = "No fixtures selected - please select at least one fixture and start again.",
 					display = displayHandle.index,
 					commands = {{value = 1, name = "Ok"}}
 				}
