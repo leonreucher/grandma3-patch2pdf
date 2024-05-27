@@ -643,7 +643,7 @@ local function Main(displayHandle,argument)
 	page:save()
 
 
-	local paramCount = GetRTChannelCount()
+	local paramCount = GetUIChannelCount()
 	
 	local textSize = 10
 	local headerSize = 22
