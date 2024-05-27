@@ -628,16 +628,16 @@ local function Main(displayHandle,argument)
 	local author = settings.inputs["Author"]
 
 	-- Create a new PDF document
-	p = PDF.new()
+	local p = PDF.new()
 
-	helv = p:new_font{ name = "Helvetica"}
-	bold = p:new_font{ name = "Helvetica", weight = "-Bold"}
+	local helv = p:new_font{ name = "Helvetica"}
+	local bold = p:new_font{ name = "Helvetica", weight = "-Bold"}
 
 	-- Table for holding all pages which will be created during the printing process
-	pages = {}
+	local pages = {}
 
 	-- Create the initial page
-	page = p:new_page()
+	local page = p:new_page()
 	table.insert(pages, page)
 
 	page:save()
