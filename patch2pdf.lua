@@ -808,8 +808,14 @@ local function Main(displayHandle,argument)
 
 		page:begin_text()
 		page:set_font(helv, textSize)
-		page:set_text_pos(xPosID, posY)
-		page:show(fid .. "/" .. cid)
+		page:set_text_pos(xPosID, posY+9)
+		page:show(fid)
+		page:end_text()
+
+		page:begin_text()
+		page:set_font(helv, textSize)
+		page:set_text_pos(xPosID, posY-5)
+		page:show(cid)
 		page:end_text()
 
 		page:begin_text()
