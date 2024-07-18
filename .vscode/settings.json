@@ -1,0 +1,17 @@
+{
+    "Lua.diagnostics.globals": [
+        "SelectionFirst",
+        "GetSubfixture",
+        "SelectionNext",
+        "IntToHandle",
+        "Root",
+        "Printf",
+        "CurrentUser",
+        "MessageBox",
+        "ErrEcho",
+        "Version",
+        "GetUIChannelCount",
+        "SelectionCount",
+        "Patch"
+    ]
+}
