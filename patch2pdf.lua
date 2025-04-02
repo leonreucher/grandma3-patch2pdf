@@ -826,7 +826,7 @@ local function Main(displayHandle, argument)
 		end
 	end
 
-	local function createCSV(fixtures)
+	local function createCSV(fixtures, storagePath)
 		local csv =
 		"type,fid,cid,isMultipatch,stage,universe,address,universeAddress,fixtureName,fixtureType,fixtureMode\n"
 
@@ -838,7 +838,7 @@ local function Main(displayHandle, argument)
 			local fixtureName = fixture.name or "-"
 			local fixtureType = "-"
 			local fixtureMode = "-"
-			local stage = IntToHandle(fixture.stage).name or "-"
+			local stage = fixture.stage.name or "-"
 
 			if fixture.ismultipatch and fixture.multipatchmain then
 				fid = fixture.multipatchmain.fid or "-"
@@ -863,7 +863,7 @@ local function Main(displayHandle, argument)
 			)
 		end
 
-		local file = io.open("/Volumes/NO NAME/patch.csv", "w")
+		local file = io.open(storagePath, "w")
 		if file then
 			file:write(csv)
 			file:close()
@@ -1106,9 +1106,10 @@ local function Main(displayHandle, argument)
 		printFixtureRow(currentPage, cleanedFixtures[i], currentY)
 	end
 
-	local storagePath = drivePath .. "/" .. fileName .. ".pdf"
+	local storagePath = drivePath .. "/" .. fileName
 
 	if fileFormat == 1 then
+		storagePath = storagePath .. ".pdf"
 		-- Iterate trough all created pages
 		for k, v in pairs(pages) do
 			-- Add pagination to the page
@@ -1131,7 +1132,8 @@ local function Main(displayHandle, argument)
 		p:write(storagePath)
 		Printf("PDF created successfully at " .. storagePath)
 	elseif fileFormat == 2 then
-		createCSV(cleanedFixtures)
+		storagePath = storagePath .. ".csv"
+		createCSV(cleanedFixtures, storagePath)
 		Printf("CSV created successfully at " .. storagePath)
 	end
 end
