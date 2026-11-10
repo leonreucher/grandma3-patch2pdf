@@ -1,8 +1,123 @@
+-- GrandMA3 Patch2PDF - https://github.com/leonreucher/grandma3-patch2pdf
+-- PDF writer based on https://github.com/catseye/pdf.lua
+
+---------------------------------------------------------------------------
 -- PDF creation part
+---------------------------------------------------------------------------
 
+local PDF = {}
 
-PDF = {}
-PDF.new = function()
+-- Helvetica / Helvetica-Bold advance widths (1/1000 em) for codes 32..126 (WinAnsiEncoding)
+local WIDTHS_REGULAR = {
+	278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278,
+	556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556,
+	1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778,
+	667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556,
+	333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556,
+	556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584,
+}
+local WIDTHS_BOLD = {
+	278, 333, 474, 556, 556, 889, 722, 238, 333, 333, 389, 584, 278, 333, 278, 278,
+	556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 333, 333, 584, 584, 584, 611,
+	975, 722, 722, 722, 722, 667, 611, 778, 722, 278, 556, 722, 611, 833, 722, 778,
+	667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 333, 278, 333, 584, 556,
+	333, 556, 611, 556, 611, 556, 333, 611, 611, 278, 278, 556, 278, 889, 611, 611,
+	611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389, 280, 389, 584,
+}
+-- Latin-1 192..255 -> base letter used for the width estimate ("?" = default width)
+local LATIN1_BASE = "AAAAAA?CEEEEIIIIDNOOOOO?OUUUUY??aaaaaa?ceeeeiiii?nooooo?ouuuuy?y"
+
+-- Unicode code points outside Latin-1 that WinAnsiEncoding can show
+local WINANSI_EXTRA = {
+	[0x20AC] = 0x80, [0x201A] = 0x82, [0x0192] = 0x83, [0x201E] = 0x84, [0x2026] = 0x85,
+	[0x2020] = 0x86, [0x2021] = 0x87, [0x02C6] = 0x88, [0x2030] = 0x89, [0x0160] = 0x8A,
+	[0x2039] = 0x8B, [0x0152] = 0x8C, [0x017D] = 0x8E, [0x2018] = 0x91, [0x2019] = 0x92,
+	[0x201C] = 0x93, [0x201D] = 0x94, [0x2022] = 0x95, [0x2013] = 0x96, [0x2014] = 0x97,
+	[0x02DC] = 0x98, [0x2122] = 0x99, [0x0161] = 0x9A, [0x203A] = 0x9B, [0x0153] = 0x9C,
+	[0x017E] = 0x9E, [0x0178] = 0x9F,
+}
+
+-- Convert a (UTF-8) string to WinAnsiEncoding bytes. Invalid UTF-8 bytes are taken as Latin-1.
+function PDF.to_winansi(s)
+	s = tostring(s or "")
+	local out = {}
+	local i, n = 1, #s
+	while i <= n do
+		local c = s:byte(i)
+		local cp, len
+		if c < 0x80 then
+			cp, len = c, 1
+		elseif c >= 0xC2 and c <= 0xDF and i + 1 <= n then
+			local c2 = s:byte(i + 1)
+			if c2 >= 0x80 and c2 <= 0xBF then
+				cp, len = (c - 0xC0) * 64 + (c2 - 0x80), 2
+			end
+		elseif c >= 0xE0 and c <= 0xEF and i + 2 <= n then
+			local c2, c3 = s:byte(i + 1, i + 2)
+			if c2 >= 0x80 and c2 <= 0xBF and c3 >= 0x80 and c3 <= 0xBF then
+				cp, len = (c - 0xE0) * 4096 + (c2 - 0x80) * 64 + (c3 - 0x80), 3
+			end
+		elseif c >= 0xF0 and c <= 0xF4 and i + 3 <= n then
+			local c2, c3, c4 = s:byte(i + 1, i + 3)
+			if c2 >= 0x80 and c2 <= 0xBF and c3 >= 0x80 and c3 <= 0xBF and c4 >= 0x80 and c4 <= 0xBF then
+				cp, len = 0x10000, 4 -- not representable
+			end
+		end
+		if not cp then cp, len = c, 1 end
+
+		local b
+		if cp < 32 then
+			b = 32
+		elseif cp < 127 then
+			b = cp
+		elseif cp >= 160 and cp <= 255 then
+			b = cp
+		else
+			b = WINANSI_EXTRA[cp] or 63 -- "?"
+		end
+		out[#out + 1] = string.char(b)
+		i = i + len
+	end
+	return table.concat(out)
+end
+
+-- Width of an already WinAnsi encoded string in points
+function PDF.text_width(encoded, bold, size)
+	local widths = bold and WIDTHS_BOLD or WIDTHS_REGULAR
+	local total = 0
+	for i = 1, #encoded do
+		local c = encoded:byte(i)
+		local wdt
+		if c >= 32 and c <= 126 then
+			wdt = widths[c - 31]
+		elseif c >= 192 then
+			local base = LATIN1_BASE:byte(c - 191)
+			if base ~= 63 then wdt = widths[base - 31] end
+		end
+		total = total + (wdt or 556)
+	end
+	return total * size / 1000
+end
+
+-- Truncate an encoded string so it fits into maxWidth (adds "...")
+function PDF.fit(encoded, bold, size, maxWidth)
+	if not maxWidth or PDF.text_width(encoded, bold, size) <= maxWidth then
+		return encoded
+	end
+	local dots = "..."
+	local limit = maxWidth - PDF.text_width(dots, bold, size)
+	local cut = #encoded
+	while cut > 0 and PDF.text_width(encoded:sub(1, cut), bold, size) > limit do
+		cut = cut - 1
+	end
+	return encoded:sub(1, cut) .. dots
+end
+
+local function pdf_escape(encoded)
+	return (encoded:gsub("[\\()]", "\\%0"))
+end
+
+PDF.new = function(pageWidth, pageHeight)
 	local pdf = {}       -- instance variable
 	local page = {}      -- array of page descriptors
 	local object = {}    -- array of object contents
@@ -11,6 +126,9 @@ PDF.new = function()
 	local catalog_obj    -- global catalog object
 	local pages_obj      -- global pages object
 	local procset_obj    -- global procset object
+
+	pageWidth = pageWidth or 612
+	pageHeight = pageHeight or 792
 
 	--
 	-- Private functions.
@@ -42,8 +160,6 @@ PDF.new = function()
 		if type(obj) ~= "table" then
 			fh:write(obj .. "\n")
 		elseif obj.datatype == "dictionary" then
-			local k, v
-
 			fh:write("<<\n")
 			for k, v in pairs(obj.contents) do
 				fh:write(string.format("/%s ", k))
@@ -51,8 +167,6 @@ PDF.new = function()
 			end
 			fh:write(">>\n")
 		elseif obj.datatype == "array" then
-			local v
-
 			fh:write("[\n")
 			for _, v in ipairs(obj.contents) do
 				write_object(fh, v)
@@ -64,9 +178,7 @@ PDF.new = function()
 			if type(obj.contents) == "string" then
 				len = string.len(obj.contents)
 			else -- assume array
-				local i, str
-
-				for i, str in ipairs(obj.contents) do
+				for _, str in ipairs(obj.contents) do
 					len = len + string.len(str) + 1
 				end
 			end
@@ -77,15 +189,13 @@ PDF.new = function()
 			if type(obj.contents) == "string" then
 				fh:write(obj.contents)
 			else -- assume array
-				local i, str
-
-				for i, str in ipairs(obj.contents) do
+				for _, str in ipairs(obj.contents) do
 					fh:write(str)
 					fh:write("\n")
 				end
 			end
 
-			fh:write("endstream\n")
+			fh:write("\nendstream\n")
 		end
 	end
 
@@ -97,34 +207,30 @@ PDF.new = function()
 	end
 
 	local write_header = function(fh)
-		fh:write("%PDF-1.0\n")
+		-- the binary comment marks the file as binary (non-ASCII text bytes follow)
+		fh:write("%PDF-1.4\n%\226\227\207\211\n")
 	end
 
 	local write_body = function(fh)
-		local i, obj
-
-		for i, obj in ipairs(object) do
+		for _, obj in ipairs(object) do
 			write_indirect_object(fh, obj)
 		end
 	end
 
 	local write_xref_table = function(fh)
-		local i, obj
-
 		xref_table_offset = fh:seek()
 		fh:write("xref\n")
-		fh:write(string.format("%d %d\n", 1, #object))
-		for i, obj in ipairs(object) do
-			fh:write(
-				string.format("%010d %05d n \n", obj.offset, 0)
-			)
+		fh:write(string.format("0 %d\n", #object + 1))
+		fh:write("0000000000 65535 f \n")
+		for _, obj in ipairs(object) do
+			fh:write(string.format("%010d %05d n \n", obj.offset, 0))
 		end
 	end
 
 	local write_trailer = function(fh)
 		fh:write("trailer\n")
 		fh:write("<<\n")
-		fh:write(string.format("/Size %d\n", #object))
+		fh:write(string.format("/Size %d\n", #object + 1))
 		fh:write("/Root " .. get_ref(catalog_obj) .. "\n")
 		fh:write(">>\n")
 		fh:write("startxref\n")
@@ -146,42 +252,28 @@ PDF.new = function()
 				Type = "/Font",
 				Subtype = "/" .. subtype,
 				BaseFont = "/" .. name .. weight,
+				Encoding = "/WinAnsiEncoding",
 			}
 		}
 		return font_obj
 	end
-
 
 	pdf.new_page = function(pdf)
 		local pg = {}  -- instance variable
 		local contents = {} -- array of operation strings
 		local used_font = {} -- fonts used on this page
 
-		--
-		-- Private functions.
-		--
-
 		local use_font = function(font_obj)
-			local i, f
-
 			for i, f in ipairs(used_font) do
 				if font_obj == f then
 					return "/F" .. i
 				end
 			end
-
 			table.insert(used_font, font_obj)
 			return "/F" .. #used_font
 		end
 
-		--
-		-- Instance methods.
-		--
-
-		--
 		-- Text functions.
-		--
-
 		pg.begin_text = function(pg)
 			table.insert(contents, "BT")
 		end
@@ -191,83 +283,41 @@ PDF.new = function()
 		end
 
 		pg.set_font = function(pg, font_obj, size)
-			table.insert(contents,
-				string.format("%s %f Tf",
-					use_font(font_obj), size)
-			)
+			table.insert(contents, string.format("%s %f Tf", use_font(font_obj), size))
 		end
 
 		pg.set_text_pos = function(pg, x, y)
-			table.insert(contents,
-				string.format("%f %f Td", x, y)
-			)
+			table.insert(contents, string.format("%f %f Td", x, y))
 		end
 
+		-- show a UTF-8 string (converted to WinAnsi and escaped)
 		pg.show = function(pg, str)
-			table.insert(contents,
-				string.format("(%s) Tj", str)
-			)
+			pg:show_encoded(PDF.to_winansi(str))
 		end
 
-		pg.set_char_spacing = function(pg, spc)
-			table.insert(contents,
-				string.format("%f Tc", spc)
-			)
+		-- show an already WinAnsi encoded string (only escaped)
+		pg.show_encoded = function(pg, encoded)
+			table.insert(contents, string.format("(%s) Tj", pdf_escape(encoded)))
 		end
 
-		--
 		-- Graphics - path drawing functions.
-		--
-
 		pg.moveto = function(pg, x, y)
-			table.insert(contents,
-				string.format("%f %f m", x, y)
-			)
+			table.insert(contents, string.format("%f %f m", x, y))
 		end
 
 		pg.lineto = function(pg, x, y)
-			table.insert(contents,
-				string.format("%f %f l", x, y)
-			)
-		end
-
-		pg.curveto = function(pg, x1, y1, x2, y2, x3, y3)
-			local str
-
-			if x3 and y3 then
-				str = string.format("%f %f %f %f %f %f c",
-					x1, y1, x2, y2, x3, y3)
-			else
-				str = string.format("%f %f %f %f v",
-					x1, y1, x2, y2)
-			end
-
-			table.insert(contents, str)
+			table.insert(contents, string.format("%f %f l", x, y))
 		end
 
 		pg.rectangle = function(pg, x, y, w, h)
-			table.insert(contents,
-				string.format("%f %f %f %f re",
-					x, y, w, h)
-			)
+			table.insert(contents, string.format("%f %f %f %f re", x, y, w, h))
 		end
 
-		--
 		-- Graphics - colours.
-		--
-
 		pg.setgray = function(pg, which, gray)
 			assert(which == "fill" or which == "stroke")
 			assert(gray >= 0 and gray <= 1)
-			if which == "fill" then
-				table.insert(contents,
-					string.format("%d g", gray)
-				)
-			else
-				table.insert(contents,
-					string.format("%d G", gray)
-				)
-			end
+			table.insert(contents, string.format(which == "fill" and "%f g" or "%f G", gray))
 		end
 
 		pg.setrgbcolor = function(pg, which, r, g, b)
@@ -275,113 +325,24 @@ PDF.new = function()
 			assert(r >= 0 and r <= 1)
 			assert(g >= 0 and g <= 1)
 			assert(b >= 0 and b <= 1)
-			if which == "fill" then
-				table.insert(contents,
-					string.format("%f %f %f rg", r, g, b)
-				)
-			else
-				table.insert(contents,
-					string.format("%f %f %f RG", r, g, b)
-				)
-			end
+			table.insert(contents, string.format(which == "fill" and "%f %f %f rg" or "%f %f %f RG", r, g, b))
 		end
 
-		pg.setcmykcolor = function(pg, which, c, m, y, k)
-			assert(which == "fill" or which == "stroke")
-			assert(c >= 0 and c <= 1)
-			assert(m >= 0 and m <= 1)
-			assert(y >= 0 and y <= 1)
-			assert(k >= 0 and k <= 1)
-			if which == "fill" then
-				table.insert(contents,
-					string.format("%f %f %f %f k", c, m, y, k)
-				)
-			else
-				table.insert(contents,
-					string.format("%f %f %f %f K", c, m, y, k)
-				)
-			end
-		end
-
-		--
 		-- Graphics - line options.
-		--
-
-		pg.setflat = function(pg, i)
-			assert(i >= 0 and i <= 100)
-			table.insert(contents,
-				string.format("%d i", i)
-			)
-		end
-
-		pg.setlinecap = function(pg, j)
-			assert(j == 0 or j == 1 or j == 2)
-			table.insert(contents,
-				string.format("%d J", j)
-			)
-		end
-
-		pg.setlinejoin = function(pg, j)
-			assert(j == 0 or j == 1 or j == 2)
-			table.insert(contents,
-				string.format("%d j", j)
-			)
-		end
-
 		pg.setlinewidth = function(pg, w)
-			table.insert(contents,
-				string.format("%d w", w)
-			)
+			table.insert(contents, string.format("%f w", w))
 		end
 
-		pg.setmiterlimit = function(pg, m)
-			assert(m >= 1)
-			table.insert(contents,
-				string.format("%d M", m)
-			)
-		end
-
-		pg.setdash = function(pg, array, phase)
-			local str = ""
-			local v
-
-			for _, v in ipairs(array) do
-				str = str .. v .. " "
-			end
-
-			table.insert(contents,
-				string.format("[%s] %d d", str, phase)
-			)
-		end
-
-		--
 		-- Graphics - path-terminating functions.
-		--
-
 		pg.stroke = function(pg)
 			table.insert(contents, "S")
-		end
-
-		pg.closepath = function(pg)
-			table.insert(contents, "h")
 		end
 
 		pg.fill = function(pg)
 			table.insert(contents, "f")
 		end
 
-		pg.newpath = function(pg)
-			table.insert(contents, "n")
-		end
-
-		pg.clip = function(pg) -- no effect until next newpath
-			table.insert(contents, "W")
-		end
-
-		--
 		-- Graphics - state save/restore.
-		--
-
 		pg.save = function(pg)
 			table.insert(contents, "q")
 		end
@@ -390,45 +351,13 @@ PDF.new = function()
 			table.insert(contents, "Q")
 		end
 
-		--
-		-- Graphics - CTM functions.
-		--
-		pg.transform = function(pg, a, b, c, d, e, f) -- aka concat
-			table.insert(contents,
-				string.format("%f %f %f %f %f %f cm",
-					a, b, c, d, e, f)
-			)
-		end
-
-		pg.translate = function(pg, x, y)
-			pg:transform(1, 0, 0, 1, x, y)
-		end
-
-		pg.scale = function(pg, x, y)
-			if not y then y = x end
-			pg:transform(x, 0, 0, y, 0, 0)
-		end
-
-		pg.rotate = function(pg, theta)
-			local c, s = math.cos(theta), math.sin(theta)
-			pg:transform(c, s, -1 * s, c, 0, 0)
-		end
-
-		pg.skew = function(pg, tha, thb)
-			local tana, tanb = math.tan(tha), math.tan(thb)
-			pg:transform(1, tana, tanb, 1, 0, 0)
-		end
-
 		pg.add = function(pg)
-			local contents_obj, this_obj, resources
-			local i, font_obj
-
-			contents_obj = add {
+			local contents_obj = add {
 				datatype = "stream",
 				contents = contents
 			}
 
-			resources = {
+			local resources = {
 				datatype = "dictionary",
 				contents = {
 					Font = {
@@ -440,11 +369,10 @@ PDF.new = function()
 			}
 
 			for i, font_obj in ipairs(used_font) do
-				resources.contents.Font.contents["F" .. i] =
-					get_ref(font_obj)
+				resources.contents.Font.contents["F" .. i] = get_ref(font_obj)
 			end
 
-			this_obj = add {
+			local this_obj = add {
 				datatype = "dictionary",
 				contents = {
 					Type = "/Page",
@@ -454,8 +382,7 @@ PDF.new = function()
 				}
 			}
 
-			table.insert(pages_obj.contents.Kids.contents,
-				get_ref(this_obj))
+			table.insert(pages_obj.contents.Kids.contents, get_ref(this_obj))
 			pages_obj.contents.Count = pages_obj.contents.Count + 1
 		end
 
@@ -463,13 +390,11 @@ PDF.new = function()
 		return pg
 	end
 
+	-- returns true or nil, error message
 	pdf.write = function(pdf, file)
-		local fh
-
-		if type(file) == "string" then
-			fh = assert(io.open(file, "w"))
-		else
-			fh = file
+		local fh, err = io.open(file, "wb")
+		if not fh then
+			return nil, err
 		end
 
 		write_header(fh)
@@ -478,6 +403,7 @@ PDF.new = function()
 		write_trailer(fh)
 
 		fh:close()
+		return true
 	end
 
 	-- initialize... add a few objects that we know will exist.
@@ -489,7 +415,8 @@ PDF.new = function()
 				datatype = "array",
 				contents = {}
 			},
-			Count = 0
+			Count = 0,
+			MediaBox = string.format("[0 0 %d %d]", pageWidth, pageHeight),
 		}
 	}
 
@@ -509,633 +436,491 @@ PDF.new = function()
 	return pdf
 end
 
+---------------------------------------------------------------------------
 -- Patch2PDF main plugin part
+---------------------------------------------------------------------------
 
+local pluginName = "Patch2PDF"
 local documentTitle = "GrandMA3 Patch Export"
 local footerNotice = "GrandMA3 - Patch2PDF"
 
-local errMsgNoUSBDevice = "Please connect a removable storage device to the system."
+local PAPER = {
+	{ name = "A4",     width = 595, height = 842 },
+	{ name = "Letter", width = 612, height = 792 },
+}
 
+-- column x positions and maximum text widths (points)
 local xPosType = 20
 local xPosID = 80
 local xPosFixtureType = 140
 local xPosFixtureName = 370
 local xPosPatch = 540
 
-local yPosHeaderRow = 600
-local yPosStageName = 770
+local maxWidthType = xPosID - xPosType - 5
+local maxWidthID = xPosFixtureType - xPosID - 5
+local maxWidthFixtureType = xPosFixtureName - xPosFixtureType - 8
+local maxWidthFixtureName = xPosPatch - xPosFixtureName - 8
 
--- Function to sort by FID
-local function sortByFID(a, b)
-	local function getFID(fixture)
-		if fixture.ismultipatch then
-			return fixture.multipatchmain.fid and tonumber(fixture.multipatchmain.fid) or math.huge
+local textSize = 10
+local headerSize = 22
+local rowHeight = 30
+local bottomMargin = 50
+
+local HUGE = math.huge
+
+local function cleanId(v)
+	if v == nil then return nil end
+	v = tostring(v)
+	if v == "" or v == "None" then return nil end
+	return v
+end
+
+local function isFixtureType(fixture, name)
+	local ft = fixture.fixturetype
+	return ft ~= nil and ft.name == name
+end
+
+-- Build a plain record from a fixture handle. The show is never written to.
+local function buildRecord(fixture, order)
+	local main = fixture.ismultipatch and fixture.multipatchmain or nil
+	local src = main or fixture
+
+	local patch = fixture.patch or ""
+	local universe, address = tostring(patch):match("^(%d+)%.(%d+)")
+	local stage = fixture.stage
+
+	local rec = {
+		order = order,
+		idtype = fixture.idtype or "-",
+		fid = cleanId(src.fid),
+		cid = cleanId(fixture.cid),
+		name = fixture.name or "",
+		mainName = main and main.name or nil,
+		isMultipatch = main ~= nil,
+		typeName = src.fixturetype and src.fixturetype.name or nil,
+		modeName = src.mode,
+		patch = tostring(patch),
+		universe = universe and tonumber(universe) or nil,
+		address = address and tonumber(address) or nil,
+		stage = stage,
+		stageName = stage and stage.name or "-",
+		stageIndex = stage and stage.index or HUGE,
+	}
+	rec.fidNum = rec.fid and tonumber(rec.fid) or HUGE
+	rec.cidNum = rec.cid and tonumber(rec.cid) or HUGE
+	return rec
+end
+
+-- lexicographic compare of key lists, always a valid strict weak ordering
+local function lessKeys(ka, kb)
+	for i = 1, #ka do
+		if ka[i] ~= kb[i] then
+			return ka[i] < kb[i]
 		end
-		return fixture.fid and tonumber(fixture.fid) or math.huge
 	end
-
-	local a_fid = getFID(a)
-	local b_fid = getFID(b)
-
-	if a.multipatchmain == b then
-		return false
-	end
-	if b.multipatchmain == a then
-		return true
-	end
-
-	return a_fid < b_fid
+	return false
 end
 
--- Function to sort by DMX address
-local function sortByDMX(a, b)
-	local function getDMXValues(patch)
-		if not patch then return nil, nil end
-		return patch:match("(%d+)%.(%d+)")
+local function sortKey(rec, sortType, groupType)
+	local key = {}
+	if groupType == 3 then
+		key[#key + 1] = rec.stageIndex
 	end
-
-	local a_universe, a_dmx = getDMXValues(a.patch)
-	local b_universe, b_dmx = getDMXValues(b.patch)
-
-	if a.multipatchmain == b then
-		return false
-	end
-	if b.multipatchmain == a then
-		return true
-	end
-
-	if a_universe == nil and b_universe == nil then
-		return false
-	elseif a_universe == nil then
-		return false
-	elseif b_universe == nil then
-		return true
-	end
-
-	if a_universe ~= b_universe then
-		return tonumber(a_universe) < tonumber(b_universe)
-	elseif a_universe == b_universe and a_dmx == b_dmx then
-		return false
-	else
-		return tonumber(a_dmx) < tonumber(b_dmx)
-	end
-end
-
-local function sortFixtures(cleanedFixtures, sortType)
 	if sortType == 2 then
-		table.sort(cleanedFixtures, sortByFID)
+		-- FID (multipatch uses the FID of its main fixture and follows it), then CID
+		key[#key + 1] = rec.fidNum
+		key[#key + 1] = rec.cidNum
+		key[#key + 1] = rec.isMultipatch and 1 or 0
 	elseif sortType == 3 then
-		table.sort(cleanedFixtures, sortByDMX)
+		-- DMX: unpatched fixtures last
+		key[#key + 1] = rec.universe or HUGE
+		key[#key + 1] = rec.address or HUGE
 	end
+	key[#key + 1] = rec.order
+	return key
+end
+
+local function sortRecords(records, sortType, groupType)
+	for _, rec in ipairs(records) do
+		rec.sortKey = sortKey(rec, sortType, groupType)
+	end
+	table.sort(records, function(a, b) return lessKeys(a.sortKey, b.sortKey) end)
+end
+
+local function csvField(value, sep)
+	value = tostring(value == nil and "-" or value)
+	if value:find('[' .. sep .. '"\r\n]') then
+		value = '"' .. value:gsub('"', '""') .. '"'
+	end
+	return value
+end
+
+local function createCSV(records, storagePath, sep)
+	local lines = {}
+	local header = { "type", "fid", "cid", "isMultipatch", "stage", "universe", "address", "universeAddress",
+		"fixtureName", "fixtureType", "fixtureMode", "multipatchMain" }
+	lines[1] = table.concat(header, sep)
+
+	for _, rec in ipairs(records) do
+		local fields = {
+			rec.idtype, rec.fid or "-", rec.cid or "-", rec.isMultipatch and "true" or "false", rec.stageName,
+			rec.universe or "-", rec.address or "-", rec.patch ~= "" and rec.patch or "-",
+			rec.name ~= "" and rec.name or "-", rec.typeName or "-", rec.modeName or "-", rec.mainName or "-",
+		}
+		for i = 1, #fields do
+			fields[i] = csvField(fields[i], sep)
+		end
+		lines[#lines + 1] = table.concat(fields, sep)
+	end
+
+	local file, err = io.open(storagePath, "wb")
+	if not file then
+		return nil, err
+	end
+	-- UTF-8 BOM for the ";" variant, so Excel (DE) shows umlauts correctly
+	if sep == ";" then
+		file:write("\239\187\191")
+	end
+	file:write(table.concat(lines, "\n"), "\n")
+	file:close()
+	return true
+end
+
+local function sanitizeFileName(name, fallback)
+	name = tostring(name or ""):gsub('[\\/:%*%?"<>|%c]', "_")
+	name = name:gsub("^%s+", ""):gsub("%s+$", "")
+	name = name:gsub("%.[Pp][Dd][Ff]$", ""):gsub("%.[Cc][Ss][Vv]$", "")
+	if name == "" then
+		return fallback
+	end
+	return name
+end
+
+local function joinPath(dir, file)
+	dir = tostring(dir or ""):gsub("[\\/]+$", "")
+	return dir .. "/" .. file
 end
 
 local function Main(displayHandle, argument)
+	local display = displayHandle and displayHandle.index or nil
+
+	local function message(title, text)
+		MessageBox({
+			title = title,
+			message = text,
+			display = display,
+			commands = { { value = 1, name = "Ok" } },
+		})
+	end
+
 	local datetime = os.date("Created at: %d.%m.%Y %H:%M")
-	local fileNameSuggestion = os.date("patch_export_%d-%m-%Y-%H-%M")
+	local fileNameSuggestion = os.date("patch_export_%Y-%m-%d_%H-%M")
 	local softwareVersion = Version()
 
+	-- Drives: all except old software versions; removable devices preferred
+	local drives = Root().Temp.DriveCollect
+	local driveValues = {}
+	local drivePaths = {}
+	local defaultDrive, firstDrive
+	local driveCount = 0
+	for i, drive in ipairs(drives:Children()) do
+		if drive.drivetype ~= "OldVersion" then
+			local label = tostring(drive.name):gsub("[\r\n]+", " ")
+			if driveValues[label] then label = label .. " (" .. i .. ")" end
+			driveValues[label] = i
+			drivePaths[i] = drive.path
+			driveCount = driveCount + 1
+			firstDrive = firstDrive or i
+			if drive.drivetype == "Removeable" and not defaultDrive then
+				defaultDrive = i
+			end
+		end
+	end
+	defaultDrive = defaultDrive or firstDrive
+
+	if driveCount == 0 then
+		message(pluginName .. " - Error", "No storage device found.")
+		ErrEcho(pluginName .. ": no storage device found")
+		return
+	end
+
+	local paperValues = {}
+	for i, paper in ipairs(PAPER) do paperValues[paper.name] = i end
+
 	local selectors = {
-		{ name = "Skip unpatched",     selectedValue = 1, values = { ["No"] = 1, ["Yes"] = 2 },                              type = 0 },
-		{ name = "Drive",              values = {},       type = 1 },
-		{ name = "Format",             selectedValue = 1, values = { ['PDF'] = 1, ["CSV"] = 2 },                             type = 1 },
-		{ name = "Export Filter",      selectedValue = 1, values = { ['Complete'] = 1, ["Selection Only"] = 2 },             type = 1 },
-		{ name = "Sort",               selectedValue = 1, values = { ['Patch Window Order'] = 1, ["FID"] = 2, ["DMX"] = 3 }, type = 0 },
-		{ name = "Grouping",           selectedValue = 1, values = { ['None'] = 1, ["Universe"] = 2, ["Stage"] = 3 },        type = 0 },
+		{ name = "Drive",              selectedValue = defaultDrive, values = driveValues,                                          type = 1 },
+		{ name = "Format",             selectedValue = 1, values = { ["PDF"] = 1, ["CSV (,)"] = 2, ["CSV (;)"] = 3 },         type = 1 },
+		{ name = "Paper",              selectedValue = 1, values = paperValues,                                               type = 1 },
+		{ name = "Export Filter",      selectedValue = 1, values = { ["Complete"] = 1, ["Selection Only"] = 2 },              type = 1 },
+		{ name = "Sort",               selectedValue = 1, values = { ["Patch Window Order"] = 1, ["FID"] = 2, ["DMX"] = 3 }, type = 0 },
+		{ name = "Grouping",           selectedValue = 1, values = { ["None"] = 1, ["Universe"] = 2, ["Stage"] = 3 },        type = 0 },
 		{ name = "Include Multipatch", selectedValue = 1, values = { ["Yes"] = 1, ["No"] = 2 },                              type = 0 },
+		{ name = "Skip unpatched",     selectedValue = 1, values = { ["No"] = 1, ["Yes"] = 2 },                              type = 0 },
 	}
 
-	-- Helper for assigning the drives in the list an ID
-	local idCounter = 0
+	local settings = MessageBox({
+		title = "Patch 2 PDF",
+		message = "Please adjust these settings as needed.",
+		display = display,
+		inputs = {
+			{ value = fileNameSuggestion, name = "File name" },
+			{ value = CurrentUser().name, name = "Author" },
+		},
+		selectors = selectors,
+		commands = { { value = 1, name = "Export" }, { value = 2, name = "Cancel" } },
+	})
 
-	-- Get currently connected storage devices
-	local drives = Root().Temp.DriveCollect
-	local usbConnected = false
-
-	for _, drive in ipairs(drives) do
-		idCounter = idCounter + 1
-		if drive.drivetype ~= "OldVersion" and drive.drivetype == "Removeable" then
-			-- At least one removeable storage device was found
-			usbConnected = true
-			selectors[2].values[drive.name] = idCounter
-			selectors[2].selectedValue = idCounter
-		end
-	end
-
-	-- If no removeable storage device was found, the plugin will be aborted
-	if usbConnected == false then
-		local res =
-			MessageBox(
-				{
-					title = "Patch2PDF - Error",
-					message = "Please connect a removable storage device before running the plugin.",
-					display = displayHandle.index,
-					commands = { { value = 1, name = "Ok" } },
-				}
-			)
-		ErrEcho(errMsgNoUSBDevice)
+	-- Cancel, Escape or closing the pop-up
+	if not settings or settings.result ~= 1 then
+		Printf(pluginName .. " aborted by user.")
 		return
 	end
 
-	local skipUnpatched = false
+	local sel = settings.selectors or {}
+	local driveIndex = sel["Drive"] or defaultDrive
+	local fileFormat = sel["Format"] or 1
+	local paper = PAPER[sel["Paper"] or 1] or PAPER[1]
+	local exportType = sel["Export Filter"] or 1
+	local sortType = sel["Sort"] or 1
+	local groupType = sel["Grouping"] or 1
+	local includeMultipatch = (sel["Include Multipatch"] or 1) == 1
+	local skipUnpatched = (sel["Skip unpatched"] or 1) == 2
 
-	local settings =
-		MessageBox(
-			{
-				title = "Patch 2 PDF",
-				message = "Please adjust these settings as needed.",
-				display = displayHandle.index,
-				inputs = {
-					{ value = fileNameSuggestion, name = "PDF title" },
-					{ value = CurrentUser().name, name = "Author" } }
-				,
-				selectors = selectors,
-				commands = { { value = 1, name = "Export" }, { value = 2, name = "Cancel" } },
-			}
-		)
-
-	local drivePath = ""
-	local exportType = 1
-	local sortType = 1
-	local groupType = 1
-	local includeMultipatch = 1
-	local fileFormat = 1
-
-	if settings.result == 2 then
-		Printf("Patch2PDF plugin aborted by user.")
-		return
-	end
-
-	for k, v in pairs(settings.selectors) do
-		if k == "Drive" then
-			drivePath = drives[v].path
-		end
-		if k == "Skip unpatched" then
-			if v == 2 then
-				skipUnpatched = true
-			end
-			if v == 1 then
-				skipUnpatched = false
-			end
-		end
-		if k == "Export Filter" then
-			exportType = v
-		end
-		if k == "Sort" then
-			sortType = v
-		end
-		if k == "Grouping" then
-			groupType = v
-		end
-		if k == "Include Multipatch" then
-			includeMultipatch = v
-		end
-		if k == "Format" then
-			fileFormat = v
-		end
-	end
-
-	local fileName = settings.inputs["PDF title"]
-	local author = settings.inputs["Author"]
-
-	-- Create a new PDF document
-	local p = PDF.new()
-
-	local helv = p:new_font { name = "Helvetica" }
-	local bold = p:new_font { name = "Helvetica", weight = "-Bold" }
-
-	-- Table for holding all pages which will be created during the printing process
-	local pages = {}
-
-	-- Create the initial page
-	local page = p:new_page()
-	table.insert(pages, page)
-
-	page:save()
-
-
-	local paramCount = GetUIChannelCount()
-
-	local textSize = 10
-	local headerSize = 22
-
-	page:begin_text()
-	page:set_font(bold, headerSize)
-	page:set_text_pos(20, 725)
-	page:show(documentTitle)
-	page:end_text()
-
-	page:begin_text()
-	page:set_font(helv, textSize)
-	page:set_text_pos(20, 700)
-	page:show(datetime)
-	page:end_text()
-
-	page:begin_text()
-	page:set_font(helv, textSize)
-	page:set_text_pos(20, 685)
-	page:show("Software version: " .. softwareVersion)
-	page:end_text()
-
-	page:begin_text()
-	page:set_font(helv, textSize)
-	page:set_text_pos(20, 670)
-	page:show("Showfile: " .. Root().manetsocket.showfile)
-	page:end_text()
-
-	page:begin_text()
-	page:set_font(helv, textSize)
-	page:set_text_pos(20, 655)
-	page:show("Author: " .. author)
-	page:end_text()
-
-	page:begin_text()
-	page:set_font(helv, textSize)
-	page:set_text_pos(20, 640)
-	page:show("Parameters: " .. paramCount)
-	page:end_text()
-
-	page:restore()
-
-	function printTableHeader(page, yPos)
-		page:begin_text()
-		page:set_font(bold, textSize)
-		page:set_text_pos(xPosType, yPos)
-		page:show("Type")
-		page:end_text()
-
-		page:begin_text()
-		page:set_font(bold, textSize)
-		page:set_text_pos(xPosID, yPos)
-		page:show("FID/CID")
-		page:end_text()
-
-		page:begin_text()
-		page:set_font(bold, textSize)
-		page:set_text_pos(xPosFixtureType, yPos)
-		page:show("Fixture Type / Fixture Mode")
-		page:end_text()
-
-		page:begin_text()
-		page:set_font(bold, textSize)
-		page:set_text_pos(xPosFixtureName, yPos)
-		page:show("Fixture Name")
-		page:end_text()
-
-		page:begin_text()
-		page:set_font(bold, textSize)
-		page:set_text_pos(xPosPatch, yPos)
-		page:show("U.Addr")
-		page:end_text()
-
-		page:setrgbcolor("stroke", 0, 0, 0)
-		page:moveto(20, yPos - 10)
-		page:lineto(590, yPos - 10)
-		page:stroke()
-	end
-
-	printTableHeader(page, yPosHeaderRow)
-
-	local currentY = 570
-	local currentPage = page
-	local pageCount = 1
-	local nextLine = 30
-
-	local lastUniverse = 0
-	local lastStage = nil
-
-	local maxFixtureTypeNameLength = 45
-	local maxFixtureNameLength = 32
-	local maxStageNameLength = 80
-
-	local function printStageName(page, yPos, stagename)
-		page:begin_text()
-		page:set_font(bold, textSize)
-		page:set_text_pos(xPosType, yPos)
-		page:show("Stage: ")
-		page:set_font(helv, textSize);
-		page:show(truncateString(stagename, maxStageNameLength))
-		page:end_text()
-	end
-
-	local function truncateString(str, max_length)
-		if #str > max_length then
-			truncatedString = str:sub(1, max_length) .. "..."
-			return truncatedString
-		else
-			return str
-		end
-	end
-
-	local function createCSV(fixtures, storagePath)
-		local csv =
-		"type,fid,cid,isMultipatch,stage,universe,address,universeAddress,fixtureName,fixtureType,fixtureMode\n"
-
-		for _, fixture in ipairs(fixtures) do
-			local fid = fixture.fid or "-"
-			local cid = fixture.cid or "-"
-			local isMultipatch = fixture.ismultipatch and "true" or "false"
-			local universe, address, universeAddress = "-", "-", "-"
-			local fixtureName = fixture.name or "-"
-			local fixtureType = "-"
-			local fixtureMode = "-"
-			local stage = fixture.stage.name or "-"
-
-			if fixture.ismultipatch and fixture.multipatchmain then
-				fid = fixture.multipatchmain.fid or "-"
-				fixtureType = fixture.multipatchmain.fixturetype and fixture.multipatchmain.fixturetype.name or "-"
-				fixtureMode = fixture.multipatchmain.mode or "-"
-			else
-				fixtureType = fixture.fixturetype and fixture.fixturetype.name or "-"
-				fixtureMode = fixture.mode or "-"
-			end
-
-			if fixture.patch then
-				universe, address = fixture.patch:match("(%d+)%.(%d+)")
-				universe = universe or "-"
-				address = address or "-"
-				universeAddress = fixture.patch
-			end
-
-			csv = csv .. string.format(
-				"%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
-				fixture.idtype or "-", fid, cid, isMultipatch, stage, universe, address, universeAddress, fixtureName,
-				fixtureType, fixtureMode
-			)
-		end
-
-		local file = io.open(storagePath, "w")
-		if file then
-			file:write(csv)
-			file:close()
-		end
-	end
-
-
-	local function printFixtureRow(page, fixture, posY)
-		local fid = fixture.fid or "-"
-		local cid = fixture.cid or "-"
-
-		if fixture.ismultipatch then
-			fid = fixture.multipatchmain.fid or "-"
-		end
-
-		if fid == "None" then fid = "-" end
-		if cid == "None" then cid = "-" end
-
-
-		-- GroupType 2 = Group by Universe
-		if groupType == 2 then
-			local universe, dmx = fixture.patch:match("(%d+)%.(%d+)")
-			if universe ~= lastUniverse then
-				lastUniverse = universe
-				local newPage = p:new_page()
-				pageCount = pageCount + 1
-				table.insert(pages, newPage)
-				currentPage = newPage
-				printTableHeader(currentPage, 750)
-				currentY = 720
-				posY = currentY
-				page = currentPage
-			end
-		end
-		-- GroupType 3 = Group by Stage
-		if groupType == 3 then
-			if fixture.Stage ~= lastStage then
-				lastStage = fixture.Stage
-				local newPage = p:new_page()
-				pageCount = pageCount + 1
-				table.insert(pages, newPage)
-				currentPage = newPage
-				printTableHeader(currentPage, 750)
-				printStageName(currentPage, yPosStageName, IntToHandle(lastStage).name)
-
-				currentY = 720
-				posY = currentY
-				page = currentPage
-			end
-		end
-
-		page:begin_text()
-		page:set_font(helv, textSize)
-		page:set_text_pos(xPosType, posY)
-		page:show(fixture.idtype)
-		page:end_text()
-
-		page:begin_text()
-		page:set_font(helv, textSize)
-		page:set_text_pos(xPosID, posY + 9)
-		page:show(fid)
-		page:end_text()
-
-		page:begin_text()
-		page:set_font(helv, textSize)
-		page:set_text_pos(xPosID, posY - 5)
-		page:show(cid)
-		page:end_text()
-
-		page:begin_text()
-		page:set_font(bold, textSize)
-		page:set_text_pos(xPosFixtureType, posY + 9)
-		if fixture.ismultipatch == true then
-			if fixture.multipatchmain.fixturetype ~= nil then
-				page:show(truncateString(fixture.multipatchmain.fixturetype.name, maxFixtureTypeNameLength))
-			else
-				page:show("-")
-			end
-		else
-			if fixture.fixturetype ~= nil then
-				page:show(truncateString(fixture.fixturetype.name, maxFixtureTypeNameLength))
-			else
-				page:show("-")
-			end
-		end
-		page:end_text()
-
-		page:begin_text()
-		page:set_font(helv, textSize)
-		page:set_text_pos(xPosFixtureType, posY - 5)
-		if fixture.ismultipatch == true then
-			if fixture.multipatchmain.fixturetype ~= nil and fixture.multipatchmain.mode ~= nil then
-				page:show(truncateString(fixture.multipatchmain.mode, maxFixtureTypeNameLength))
-			else
-				page:show("-")
-			end
-		else
-			if fixture.fixturetype ~= nil then
-				if fixture.mode ~= nil then
-					page:show(truncateString(fixture.mode, maxFixtureTypeNameLength))
-				else
-					page:show("-")
-				end
-			else
-				page:show("-")
-			end
-		end
-		page:end_text()
-
-		page:begin_text()
-		page:set_font(helv, textSize)
-		page:set_text_pos(xPosFixtureName, posY)
-		-- If fixture is multi patch, check if it has a name, otherwise take the name of the parent fixture
-		if fixture.ismultipatch == true then
-			page:show(truncateString(fixture.name .. "[" .. fixture.multipatchmain.name .. "]", maxFixtureNameLength))
-		else
-			page:show(truncateString(fixture.name, maxFixtureNameLength))
-		end
-		page:end_text()
-
-		page:begin_text()
-		page:set_font(helv, textSize)
-		page:set_text_pos(xPosPatch, posY)
-		page:show(fixture.patch)
-		page:end_text()
-
-		page:setrgbcolor("stroke", 0.8, 0.8, 0.8)
-		page:moveto(20, posY - 10)
-		page:lineto(590, posY - 10)
-		page:stroke()
-
-		currentY = currentY - nextLine
-
-		if currentY < 50 then
-			local newPage = p:new_page()
-			pageCount = pageCount + 1
-			table.insert(pages, newPage)
-			currentPage = newPage
-			printTableHeader(currentPage, 750)
-			if groupType == 3 then
-				printStageName(currentPage, yPosStageName, IntToHandle(lastStage).name)
-			end
-			currentY = 720
-		end
-	end
-
-	local fixturesRaw = {}
-	local cleanedFixtures = {}
-
-	-- Helper function for removing unwanted objects and disassembling fixture groupings
-	function cleanupFixtures(fixture)
-		if (fixture.fixturetype ~= nil) and (fixture.fixturetype.name == "Grouping") then
-			local children = fixture:Children()
-			for j = 1, #children do
-				cleanupFixtures(children[j])
-			end
-			goto continue
-		end
-		-- Skip the fixture if its type is universal
-		if (fixture.fixturetype ~= nil) and (fixture.fixturetype.name == "Universal") then
-			goto continue
-		end
-		-- If fixture is a multipatch assign the dmx address of the parent fixture for correct sorting by DMX
-		if fixture.ismultipatch then
-			if includeMultipatch == 2 then
-				goto continue
-			end
-			fixture.patch = fixture.multipatchmain.patch
-		end
-		-- Skip the fixture if not patched and skipUnpatched is enabled by the user
-		if fixture.patch == "" and skipUnpatched then
-			goto continue
-		end
-		table.insert(cleanedFixtures, fixture);
-		::continue::
-	end
+	local inputs = settings.inputs or {}
+	local fileName = sanitizeFileName(inputs["File name"], fileNameSuggestion)
+	local author = inputs["Author"] or ""
+	local drivePath = drivePaths[driveIndex] or drivePaths[defaultDrive]
 
 	-- If grouping by universe is selected, order the fixtures by DMX address
 	if groupType == 2 then
 		sortType = 3
 	end
 
-	-- If grouping by stage is selected, order the fixtures by the default patch order
-	if groupType == 3 then
-		sortType = 1
-		exportType = 1
-	end
+	-------------------------------------------------------------------------
+	-- Collect fixtures
+	-------------------------------------------------------------------------
+	local records = {}
+	local seen = {}
 
-	-- Export all fixtures
-	if exportType == 1 then
-		-- Collect all fixtures from all stages
-		for stageIndex, stage in ipairs(Patch().Stages) do
-			for _, fixture in ipairs(stage.fixtures) do
-				table.insert(fixturesRaw, fixture)
+	local function collect(fixture)
+		if fixture == nil then return end
+		-- disassemble fixture groupings
+		if isFixtureType(fixture, "Grouping") then
+			for _, child in ipairs(fixture:Children()) do
+				collect(child)
 			end
-		end
-	end
-
-	-- Export only selected fixtures
-	if exportType == 2 then
-		if SelectionCount() <= 0 then
-			local res =
-				MessageBox(
-					{
-						title = "Patch2PDF - Error",
-						message = "No fixtures selected - please select at least one fixture and start again.",
-						display = displayHandle.index,
-						commands = { { value = 1, name = "Ok" } }
-					}
-				)
-			ErrEcho("No fixturesRaw selected to be exported")
 			return
 		end
-		-- Collect all currently selected fixtures
-		local subfixtureIndex = SelectionFirst();
-		repeat
-			local fixtureHandle = GetSubfixture(subfixtureIndex)
-			table.insert(fixturesRaw, fixtureHandle)
+		-- skip the universal fixture
+		if isFixtureType(fixture, "Universal") then return end
+		if fixture.ismultipatch and not includeMultipatch then return end
+		if skipUnpatched and (fixture.patch == nil or fixture.patch == "") then return end
+
+		local addr = fixture:Addr()
+		if seen[addr] then return end
+		seen[addr] = true
+		records[#records + 1] = buildRecord(fixture, #records + 1)
+	end
+
+	if exportType == 1 then
+		-- all fixtures of all stages
+		for _, stage in ipairs(Patch().Stages:Children()) do
+			for _, fixture in ipairs(stage.fixtures:Children()) do
+				collect(fixture)
+			end
+		end
+	else
+		if SelectionCount() <= 0 then
+			message(pluginName .. " - Error", "No fixtures selected - please select at least one fixture and start again.")
+			ErrEcho(pluginName .. ": no fixtures selected to be exported")
+			return
+		end
+		local subfixtureIndex = SelectionFirst()
+		while subfixtureIndex do
+			local handle = GetSubfixture(subfixtureIndex)
+			-- a selected cell (class SubFixture, can be nested) belongs to its fixture
+			while handle and handle:GetClass() == "SubFixture" do
+				handle = handle:Parent()
+			end
+			collect(handle)
 			subfixtureIndex = SelectionNext(subfixtureIndex)
-		until not subfixtureIndex;
-	end
-
-	for _, fixture in ipairs(fixturesRaw) do
-		cleanupFixtures(fixture)
-	end
-
-	-- Sort Fixtures
-
-	sortFixtures(cleanedFixtures, sortType)
-
-	if #cleanedFixtures > 0 then
-		local universe, dmx = cleanedFixtures[1].patch:match("(%d+)%.(%d+)")
-		lastUniverse = universe
-		lastStage = cleanedFixtures[1].Stage
-		if groupType == 3 then
-			printStageName(page, yPosHeaderRow + 20, IntToHandle(lastStage).name)
 		end
 	end
-	for i = 1, #cleanedFixtures do
-		printFixtureRow(currentPage, cleanedFixtures[i], currentY)
-	end
 
-	local storagePath = drivePath .. "/" .. fileName
+	sortRecords(records, sortType, groupType)
 
-	if fileFormat == 1 then
-		storagePath = storagePath .. ".pdf"
-		-- Iterate trough all created pages
-		for k, v in pairs(pages) do
-			-- Add pagination to the page
-			v:begin_text()
-			v:set_font(helv, textSize)
-			v:set_text_pos(520, 10)
-			v:show("Page " .. k .. "/" .. pageCount)
-			v:end_text()
+	local storagePath = joinPath(drivePath, fileName)
 
-			-- Add the footer notice to the page
-			v:begin_text()
-			v:set_font(helv, textSize)
-			v:set_text_pos(20, 10)
-			v:show(footerNotice)
-			v:end_text()
-
-			-- Add the page to the document
-			v:add()
-		end
-		p:write(storagePath)
-		Printf("PDF created successfully at " .. storagePath)
-	elseif fileFormat == 2 then
+	-------------------------------------------------------------------------
+	-- CSV
+	-------------------------------------------------------------------------
+	if fileFormat == 2 or fileFormat == 3 then
 		storagePath = storagePath .. ".csv"
-		createCSV(cleanedFixtures, storagePath)
-		Printf("CSV created successfully at " .. storagePath)
+		local ok, err = createCSV(records, storagePath, fileFormat == 3 and ";" or ",")
+		if not ok then
+			message(pluginName .. " - Error", "Could not write " .. storagePath .. "\n" .. tostring(err))
+			ErrEcho(pluginName .. ": could not write " .. storagePath .. ": " .. tostring(err))
+			return
+		end
+		Printf(pluginName .. ": CSV with " .. #records .. " fixtures created at " .. storagePath)
+		message(pluginName, "CSV with " .. #records .. " fixtures created:\n" .. storagePath)
+		return
 	end
+
+	-------------------------------------------------------------------------
+	-- PDF
+	-------------------------------------------------------------------------
+	storagePath = storagePath .. ".pdf"
+
+	local W, H = paper.width, paper.height
+	local xRight = W - 20
+
+	local p = PDF.new(W, H)
+	local helv = p:new_font { name = "Helvetica" }
+	local bold = p:new_font { name = "Helvetica", weight = "-Bold" }
+
+	local pages = {}
+	local page
+
+	local function text(pg, isBold, size, x, y, str, maxWidth)
+		local encoded = PDF.fit(PDF.to_winansi(str), isBold, size, maxWidth)
+		pg:begin_text()
+		pg:set_font(isBold and bold or helv, size)
+		pg:set_text_pos(x, y)
+		pg:show_encoded(encoded)
+		pg:end_text()
+	end
+
+	local function line(pg, y, gray)
+		pg:setrgbcolor("stroke", gray, gray, gray)
+		pg:moveto(20, y)
+		pg:lineto(xRight, y)
+		pg:stroke()
+	end
+
+	local function printTableHeader(pg, y)
+		text(pg, true, textSize, xPosType, y, "Type")
+		text(pg, true, textSize, xPosID, y, "FID/CID")
+		text(pg, true, textSize, xPosFixtureType, y, "Fixture Type / Fixture Mode")
+		text(pg, true, textSize, xPosFixtureName, y, "Fixture Name")
+		text(pg, true, textSize, xPosPatch, y, "U.Addr")
+		line(pg, y - 10, 0)
+	end
+
+	local function printGroupLabel(pg, y, label)
+		if label then
+			text(pg, true, 12, xPosType, y, label, xRight - xPosType)
+		end
+	end
+
+	local currentY
+	local currentLabel
+
+	local function newPage(label)
+		page = p:new_page()
+		pages[#pages + 1] = page
+		printGroupLabel(page, H - 22, label)
+		printTableHeader(page, H - 42)
+		currentY = H - 72
+	end
+
+	local function groupKeyAndLabel(rec)
+		if groupType == 2 then
+			if rec.universe then
+				return "U" .. rec.universe, "Universe " .. rec.universe
+			end
+			return "U-", "Unpatched"
+		elseif groupType == 3 then
+			return rec.stage or "-", "Stage: " .. rec.stageName
+		end
+		return nil, nil
+	end
+
+	-- First page with document information
+	page = p:new_page()
+	pages[1] = page
+
+	local sortNames = { "Patch Window Order", "FID", "DMX" }
+	local groupNames = { "None", "Universe", "Stage" }
+
+	text(page, true, headerSize, 20, H - 67, documentTitle)
+	text(page, false, textSize, 20, H - 92, datetime)
+	text(page, false, textSize, 20, H - 107, "Software version: " .. tostring(softwareVersion))
+	text(page, false, textSize, 20, H - 122, "Showfile: " .. tostring(Root().manetsocket.showfile), xRight - 20)
+	text(page, false, textSize, 20, H - 137, "Author: " .. tostring(author), xRight - 20)
+	text(page, false, textSize, 20, H - 152, "Parameters: " .. tostring(GetUIChannelCount()))
+	text(page, false, textSize, 300, H - 92, "Fixtures: " .. #records)
+	text(page, false, textSize, 300, H - 107, "Export: " .. (exportType == 2 and "Selection only" or "Complete")
+		.. (includeMultipatch and "" or ", without multipatch") .. (skipUnpatched and ", without unpatched" or ""))
+	text(page, false, textSize, 300, H - 122, "Sort: " .. sortNames[sortType] .. "   Grouping: " .. groupNames[groupType])
+
+	if #records > 0 and groupType ~= 1 then
+		local key, label = groupKeyAndLabel(records[1])
+		currentLabel = label
+		printGroupLabel(page, H - 172, label)
+	end
+	printTableHeader(page, H - 192)
+	currentY = H - 222
+
+	local lastGroupKey
+	if #records > 0 then
+		lastGroupKey = groupKeyAndLabel(records[1])
+	end
+
+	local function printFixtureRow(rec)
+		-- new page for every group
+		if groupType ~= 1 then
+			local key, label = groupKeyAndLabel(rec)
+			if key ~= lastGroupKey then
+				lastGroupKey = key
+				currentLabel = label
+				newPage(label)
+			end
+		end
+		-- page break
+		if currentY < bottomMargin then
+			newPage(currentLabel and (currentLabel .. " (cont.)") or nil)
+		end
+
+		local y = currentY
+		text(page, false, textSize, xPosType, y, rec.idtype, maxWidthType)
+		text(page, false, textSize, xPosID, y + 9, rec.fid or "-", maxWidthID)
+		text(page, false, textSize, xPosID, y - 5, rec.cid or "-", maxWidthID)
+		text(page, true, textSize, xPosFixtureType, y + 9, rec.typeName or "-", maxWidthFixtureType)
+		text(page, false, textSize, xPosFixtureType, y - 5, rec.typeName and rec.modeName or "-", maxWidthFixtureType)
+
+		local name = rec.name
+		if rec.isMultipatch then
+			name = name .. " [" .. tostring(rec.mainName) .. "]"
+		end
+		text(page, false, textSize, xPosFixtureName, y, name ~= "" and name or "-", maxWidthFixtureName)
+		text(page, false, textSize, xPosPatch, y, rec.patch ~= "" and rec.patch or "-", xRight - xPosPatch)
+
+		line(page, y - 10, 0.8)
+		currentY = currentY - rowHeight
+	end
+
+	for _, rec in ipairs(records) do
+		printFixtureRow(rec)
+	end
+
+	-- pagination + footer
+	local pageCount = #pages
+	for k, v in ipairs(pages) do
+		local label = "Page " .. k .. "/" .. pageCount
+		text(v, false, textSize, xRight - PDF.text_width(label, false, textSize), 10, label)
+		text(v, false, textSize, 20, 10, footerNotice)
+		v:add()
+	end
+
+	local ok, err = p:write(storagePath)
+	if not ok then
+		message(pluginName .. " - Error", "Could not write " .. storagePath .. "\n" .. tostring(err))
+		ErrEcho(pluginName .. ": could not write " .. storagePath .. ": " .. tostring(err))
+		return
+	end
+	Printf(pluginName .. ": PDF with " .. #records .. " fixtures (" .. pageCount .. " pages) created at " .. storagePath)
+	message(pluginName, "PDF with " .. #records .. " fixtures (" .. pageCount .. " pages) created:\n" .. storagePath)
 end
 
 return Main

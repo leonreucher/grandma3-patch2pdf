@@ -20,7 +20,17 @@ You can group the exported fixtures by:
 - Universe
 - Stage
 
-You can select to either export the whole patch or just the currently selected fixtures. Also you can choose to group the fixtures by universe - then for every universe a new page is being created. Please note that when grouping is enabled, the selected sorting feature is being ignored.
+Every group starts on a new page with a heading (e.g. "Universe 3", "Stage: FOH"). When grouping by universe, the fixtures are sorted by DMX address; when grouping by stage, the selected sorting is applied inside each stage.
+
+You can select to either export the whole patch or just the currently selected fixtures (selected cells are mapped to their fixture).
+
+Further options:
+- Format: PDF, CSV (comma separated) or CSV (semicolon separated, UTF-8 with BOM - opens directly in Excel with German/European locale)
+- Paper size: A4 or Letter
+- Drive: any connected removable device or the internal drive
+- Include multipatch fixtures (shown with their own DMX address) and skip unpatched fixtures
+
+Names with special characters (umlauts, brackets, backslashes) are exported correctly, long names are shortened to fit their column.
 
 This plugin is pretty new and currently in beta testing - at this stage of development, errors can occur: please create an issue if you find anything which is not working as intended.
 
