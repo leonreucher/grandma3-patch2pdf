@@ -656,7 +656,8 @@ local function Main(displayHandle, argument)
 	local paperValues = {}
 	for i, paper in ipairs(PAPER) do paperValues[paper.name] = i end
 
-	-- Stage filter: one checkbox per stage (only shown when there is more than one stage)
+	-- Stage filter: "Choose..." opens a second dialog with one checkbox per stage
+	-- (only offered when there is more than one stage)
 	local stageList = {}
 	local stageLabels = {}
 	for _, stage in ipairs(Patch().Stages:Children()) do
@@ -664,13 +665,6 @@ local function Main(displayHandle, argument)
 		if stageLabels[label] then label = label .. " (" .. tostring(stage.index) .. ")" end
 		stageLabels[label] = true
 		stageList[#stageList + 1] = { handle = stage, label = label, name = tostring(stage.name) }
-	end
-	local states
-	if #stageList > 1 then
-		states = {}
-		for _, st in ipairs(stageList) do
-			states[#states + 1] = { name = st.label, state = true }
-		end
 	end
 
 	local selectors = {
@@ -684,17 +678,20 @@ local function Main(displayHandle, argument)
 		{ name = "Include Multipatch", selectedValue = 1, values = { ["Yes"] = 1, ["No"] = 2 },                              type = 0 },
 		{ name = "Skip unpatched",     selectedValue = 1, values = { ["No"] = 1, ["Yes"] = 2 },                              type = 0 },
 	}
+	if #stageList > 1 then
+		selectors[#selectors + 1] = { name = "Stages", selectedValue = 1, values = { ["All"] = 1, ["Choose..."] = 2 }, type = 0 }
+	end
+	for i, s in ipairs(selectors) do s.order = i end
 
 	local settings = MessageBox({
 		title = "Patch 2 PDF",
 		message = "Please adjust these settings as needed.",
 		display = display,
 		inputs = {
-			{ value = fileNameSuggestion, name = "File name" },
-			{ value = CurrentUser().name, name = "Author" },
+			{ value = fileNameSuggestion, name = "File name", order = 1 },
+			{ value = CurrentUser().name, name = "Author", order = 2 },
 		},
 		selectors = selectors,
-		states = states,
 		commands = { { value = 1, name = "Export" }, { value = 2, name = "Cancel" } },
 	})
 
@@ -720,12 +717,31 @@ local function Main(displayHandle, argument)
 	local author = inputs["Author"] or ""
 	local drivePath = drivePaths[driveIndex] or drivePaths[defaultDrive]
 
-	-- Selected stages (all stages when the filter is not shown)
+	-- Selected stages: all, or chosen in a second dialog
+	local chooseStages = (sel["Stages"] or 1) == 2
+	local resultStates = {}
+	if chooseStages then
+		local states = {}
+		for i, st in ipairs(stageList) do
+			states[#states + 1] = { name = st.label, state = true, order = i }
+		end
+		local stageDialog = MessageBox({
+			title = "Patch 2 PDF - Stages",
+			message = "Select the stages to export.",
+			display = display,
+			states = states,
+			commands = { { value = 1, name = "Export" }, { value = 2, name = "Cancel" } },
+		})
+		if not stageDialog or stageDialog.result ~= 1 then
+			Printf(pluginName .. " aborted by user.")
+			return
+		end
+		resultStates = stageDialog.states or {}
+	end
 	local stageAllowed = {}
 	local selectedStageNames = {}
-	local resultStates = settings.states or {}
 	for _, st in ipairs(stageList) do
-		if not states or resultStates[st.label] ~= false then
+		if not chooseStages or resultStates[st.label] ~= false then
 			stageAllowed[#stageAllowed + 1] = st.handle
 			selectedStageNames[#selectedStageNames + 1] = st.name
 		end
