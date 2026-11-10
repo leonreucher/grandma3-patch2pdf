@@ -789,9 +789,10 @@ local function Main(displayHandle, argument)
 		if fixture.ismultipatch and not includeMultipatch then return end
 		if skipUnpatched and (fixture.patch == nil or fixture.patch == "") then return end
 
-		local addr = fixture:Addr()
-		if seen[addr] then return end
-		seen[addr] = true
+		-- Addr() is not unique (a multipatch shares it with other fixtures), the handle is
+		local key = HandleToInt(fixture)
+		if seen[key] then return end
+		seen[key] = true
 		records[#records + 1] = buildRecord(fixture, #records + 1)
 	end
 
