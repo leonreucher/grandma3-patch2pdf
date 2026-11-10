@@ -453,13 +453,22 @@ local PAPER = {
 local xPosType = 20
 local xPosID = 80
 local xPosFixtureType = 140
-local xPosFixtureName = 370
-local xPosPatch = 540
+-- name and patch column depend on the page width (portrait / landscape), see layoutColumns()
+local xPosFixtureName
+local xPosPatch
 
 local maxWidthType = xPosID - xPosType - 5
 local maxWidthID = xPosFixtureType - xPosID - 5
-local maxWidthFixtureType = xPosFixtureName - xPosFixtureType - 8
-local maxWidthFixtureName = xPosPatch - xPosFixtureName - 8
+local maxWidthFixtureType
+local maxWidthFixtureName
+
+local function layoutColumns(pageWidth)
+	xPosPatch = pageWidth - 55
+	-- 57.5 % of the remaining width for fixture type / mode, the rest for the name
+	xPosFixtureName = math.floor(xPosFixtureType + (xPosPatch - xPosFixtureType) * 0.575 + 0.5)
+	maxWidthFixtureType = xPosFixtureName - xPosFixtureType - 8
+	maxWidthFixtureName = xPosPatch - xPosFixtureName - 8
+end
 
 local textSize = 10
 local headerSize = 22
@@ -647,10 +656,28 @@ local function Main(displayHandle, argument)
 	local paperValues = {}
 	for i, paper in ipairs(PAPER) do paperValues[paper.name] = i end
 
+	-- Stage filter: one checkbox per stage (only shown when there is more than one stage)
+	local stageList = {}
+	local stageLabels = {}
+	for _, stage in ipairs(Patch().Stages:Children()) do
+		local label = "Stage: " .. tostring(stage.name)
+		if stageLabels[label] then label = label .. " (" .. tostring(stage.index) .. ")" end
+		stageLabels[label] = true
+		stageList[#stageList + 1] = { handle = stage, label = label, name = tostring(stage.name) }
+	end
+	local states
+	if #stageList > 1 then
+		states = {}
+		for _, st in ipairs(stageList) do
+			states[#states + 1] = { name = st.label, state = true }
+		end
+	end
+
 	local selectors = {
 		{ name = "Drive",              selectedValue = defaultDrive, values = driveValues,                                          type = 1 },
 		{ name = "Format",             selectedValue = 1, values = { ["PDF"] = 1, ["CSV (,)"] = 2, ["CSV (;)"] = 3 },         type = 1 },
 		{ name = "Paper",              selectedValue = 1, values = paperValues,                                               type = 1 },
+		{ name = "Orientation",        selectedValue = 1, values = { ["Portrait"] = 1, ["Landscape"] = 2 },                  type = 1 },
 		{ name = "Export Filter",      selectedValue = 1, values = { ["Complete"] = 1, ["Selection Only"] = 2 },              type = 1 },
 		{ name = "Sort",               selectedValue = 1, values = { ["Patch Window Order"] = 1, ["FID"] = 2, ["DMX"] = 3 }, type = 0 },
 		{ name = "Grouping",           selectedValue = 1, values = { ["None"] = 1, ["Universe"] = 2, ["Stage"] = 3 },        type = 0 },
@@ -667,6 +694,7 @@ local function Main(displayHandle, argument)
 			{ value = CurrentUser().name, name = "Author" },
 		},
 		selectors = selectors,
+		states = states,
 		commands = { { value = 1, name = "Export" }, { value = 2, name = "Cancel" } },
 	})
 
@@ -680,6 +708,7 @@ local function Main(displayHandle, argument)
 	local driveIndex = sel["Drive"] or defaultDrive
 	local fileFormat = sel["Format"] or 1
 	local paper = PAPER[sel["Paper"] or 1] or PAPER[1]
+	local landscape = (sel["Orientation"] or 1) == 2
 	local exportType = sel["Export Filter"] or 1
 	local sortType = sel["Sort"] or 1
 	local groupType = sel["Grouping"] or 1
@@ -690,6 +719,31 @@ local function Main(displayHandle, argument)
 	local fileName = sanitizeFileName(inputs["File name"], fileNameSuggestion)
 	local author = inputs["Author"] or ""
 	local drivePath = drivePaths[driveIndex] or drivePaths[defaultDrive]
+
+	-- Selected stages (all stages when the filter is not shown)
+	local stageAllowed = {}
+	local selectedStageNames = {}
+	local resultStates = settings.states or {}
+	for _, st in ipairs(stageList) do
+		if not states or resultStates[st.label] ~= false then
+			stageAllowed[#stageAllowed + 1] = st.handle
+			selectedStageNames[#selectedStageNames + 1] = st.name
+		end
+	end
+	if #stageAllowed == 0 then
+		message(pluginName .. " - Error", "No stage selected - please select at least one stage.")
+		ErrEcho(pluginName .. ": no stage selected")
+		return
+	end
+	local allStages = #stageAllowed == #stageList
+
+	local function isStageAllowed(stage)
+		if allStages then return true end
+		for _, s in ipairs(stageAllowed) do
+			if s == stage then return true end
+		end
+		return false
+	end
 
 	-- If grouping by universe is selected, order the fixtures by DMX address
 	if groupType == 2 then
@@ -713,6 +767,7 @@ local function Main(displayHandle, argument)
 		end
 		-- skip the universal fixture
 		if isFixtureType(fixture, "Universal") then return end
+		if not isStageAllowed(fixture.stage) then return end
 		if fixture.ismultipatch and not includeMultipatch then return end
 		if skipUnpatched and (fixture.patch == nil or fixture.patch == "") then return end
 
@@ -723,8 +778,8 @@ local function Main(displayHandle, argument)
 	end
 
 	if exportType == 1 then
-		-- all fixtures of all stages
-		for _, stage in ipairs(Patch().Stages:Children()) do
+		-- all fixtures of the selected stages
+		for _, stage in ipairs(stageAllowed) do
 			for _, fixture in ipairs(stage.fixtures:Children()) do
 				collect(fixture)
 			end
@@ -745,6 +800,12 @@ local function Main(displayHandle, argument)
 			collect(handle)
 			subfixtureIndex = SelectionNext(subfixtureIndex)
 		end
+	end
+
+	if #records == 0 then
+		message(pluginName .. " - Error", "No fixtures to export with the selected options.")
+		ErrEcho(pluginName .. ": no fixtures to export")
+		return
 	end
 
 	sortRecords(records, sortType, groupType)
@@ -773,7 +834,11 @@ local function Main(displayHandle, argument)
 	storagePath = storagePath .. ".pdf"
 
 	local W, H = paper.width, paper.height
+	if landscape then
+		W, H = H, W
+	end
 	local xRight = W - 20
+	layoutColumns(W)
 
 	local p = PDF.new(W, H)
 	local helv = p:new_font { name = "Helvetica" }
@@ -853,6 +918,8 @@ local function Main(displayHandle, argument)
 	text(page, false, textSize, 300, H - 107, "Export: " .. (exportType == 2 and "Selection only" or "Complete")
 		.. (includeMultipatch and "" or ", without multipatch") .. (skipUnpatched and ", without unpatched" or ""))
 	text(page, false, textSize, 300, H - 122, "Sort: " .. sortNames[sortType] .. "   Grouping: " .. groupNames[groupType])
+	text(page, false, textSize, 300, H - 137, "Stages: " .. (allStages and "All" or table.concat(selectedStageNames, ", ")),
+		xRight - 300)
 
 	if #records > 0 and groupType ~= 1 then
 		local key, label = groupKeyAndLabel(records[1])

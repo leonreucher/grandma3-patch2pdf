@@ -26,7 +26,8 @@ You can select to either export the whole patch or just the currently selected f
 
 Further options:
 - Format: PDF, CSV (comma separated) or CSV (semicolon separated, UTF-8 with BOM - opens directly in Excel with German/European locale)
-- Paper size: A4 or Letter
+- Paper size: A4 or Letter, portrait or landscape (landscape gives more room for fixture type and name)
+- Stage filter: when the show has more than one stage, every stage can be switched on/off in the dialog
 - Drive: any connected removable device or the internal drive
 - Include multipatch fixtures (shown with their own DMX address) and skip unpatched fixtures
 
@@ -43,9 +44,6 @@ USB path for plugin files:
 
 ## Credits ##
 The creation of the PDF document is based on the code from https://github.com/catseye/pdf.lua.
-
-## Known limitations ##
-Currently all stages in the patch are being exported - it is planned to add a filter option for selecting only the stages which should be exported. 
 
 ## Disclaimer ##
 
