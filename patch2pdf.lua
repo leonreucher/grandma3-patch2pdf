@@ -738,14 +738,9 @@ local function Main(displayHandle, argument)
 		local subfixtureIndex = SelectionFirst()
 		while subfixtureIndex do
 			local handle = GetSubfixture(subfixtureIndex)
-			-- a selected cell/subfixture belongs to its patched fixture (stop at fixture groupings)
-			while handle do
-				local parent = handle:Parent()
-				if parent and parent:GetClass() == "Fixture" and not isFixtureType(parent, "Grouping") then
-					handle = parent
-				else
-					break
-				end
+			-- a selected cell (class SubFixture, can be nested) belongs to its fixture
+			while handle and handle:GetClass() == "SubFixture" do
+				handle = handle:Parent()
 			end
 			collect(handle)
 			subfixtureIndex = SelectionNext(subfixtureIndex)
