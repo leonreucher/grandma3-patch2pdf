@@ -27,13 +27,19 @@ You can select to either export the whole patch or just the currently selected f
 Further options:
 - Format: PDF, CSV (comma separated) or CSV (semicolon separated, UTF-8 with BOM - opens directly in Excel with German/European locale)
 - Paper size: A4 or Letter, portrait or landscape (landscape gives more room for fixture type and name)
-- Stage filter: when the show has more than one stage, set "Stages" to "Choose..." and select the stages in a second dialog
+- Stage filter: select stages directly in the Fixtures tab, with Select All and Clear controls
 - Drive: any connected removable device or the internal drive
 - Include multipatch fixtures (shown with their own DMX address) and skip unpatched fixtures
 
 Names with special characters (umlauts, brackets, backslashes) are exported correctly, long names are shortened to fit their column.
 
-This plugin is pretty new and currently in beta testing - at this stage of development, errors can occur: please create an issue if you find anything which is not working as intended.
+## Export menu ##
+
+The plugin opens a native grandMA3 window with three tabs:
+
+- **Export:** PDF or CSV format, file name, author, and destination drive. The destination folder and final file name are shown before exporting.
+- **Fixtures:** complete patch or current selection, multipatch and unpatched options, and a scrollable stage list. All stages start selected.
+- **Layout:** sorting, grouping, paper size, and orientation. Universe grouping displays its enforced DMX sorting; switching back restores your sort choice. PDF-only controls are disabled for CSV.
 
 ## Installation ##
 
@@ -48,8 +54,6 @@ The creation of the PDF document is based on the code from https://github.com/ca
 ## Disclaimer ##
 
 The project is delivered as is and there is no warranty that the plugin is working fine. This project is open source and has nothing to do with the MA Lighting GmbH coorperation. 
-
-![patch2pdf-config](https://github.com/leonreucher/grandma3-patch2pdf/assets/19686873/c622a612-5413-4b58-a439-c2756c1fdbb6)
 
 ![patch2pdf-screenshot](https://github.com/leonreucher/grandma3-patch2pdf/assets/19686873/eb05d2c0-685f-43af-93b7-957bf1082e3a)
 
