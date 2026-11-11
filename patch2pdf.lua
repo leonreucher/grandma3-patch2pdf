@@ -667,12 +667,14 @@ local function Main(displayHandle, argument)
 		stageList[#stageList + 1] = { handle = stage, label = label, name = tostring(stage.name) }
 	end
 
+	-- radio buttons (type 1) only for the first three options, more radio groups
+	-- overflow the pop-up width on onPC; everything else are swipe buttons (type 0)
 	local selectors = {
 		{ name = "Drive",              selectedValue = defaultDrive, values = driveValues,                                          type = 1 },
 		{ name = "Format",             selectedValue = 1, values = { ["PDF"] = 1, ["CSV (,)"] = 2, ["CSV (;)"] = 3 },         type = 1 },
-		{ name = "Paper",              selectedValue = 1, values = paperValues,                                               type = 1 },
-		{ name = "Orientation",        selectedValue = 1, values = { ["Portrait"] = 1, ["Landscape"] = 2 },                  type = 1 },
 		{ name = "Export Filter",      selectedValue = 1, values = { ["Complete"] = 1, ["Selection Only"] = 2 },              type = 1 },
+		{ name = "Paper",              selectedValue = 1, values = paperValues,                                               type = 0 },
+		{ name = "Orientation",        selectedValue = 1, values = { ["Portrait"] = 1, ["Landscape"] = 2 },                  type = 0 },
 		{ name = "Sort",               selectedValue = 1, values = { ["Patch Window Order"] = 1, ["FID"] = 2, ["DMX"] = 3 }, type = 0 },
 		{ name = "Grouping",           selectedValue = 1, values = { ["None"] = 1, ["Universe"] = 2, ["Stage"] = 3 },        type = 0 },
 		{ name = "Include Multipatch", selectedValue = 1, values = { ["Yes"] = 1, ["No"] = 2 },                              type = 0 },
@@ -787,9 +789,10 @@ local function Main(displayHandle, argument)
 		if fixture.ismultipatch and not includeMultipatch then return end
 		if skipUnpatched and (fixture.patch == nil or fixture.patch == "") then return end
 
-		local addr = fixture:Addr()
-		if seen[addr] then return end
-		seen[addr] = true
+		-- Addr() is not unique (a multipatch shares it with other fixtures), the handle is
+		local key = HandleToInt(fixture)
+		if seen[key] then return end
+		seen[key] = true
 		records[#records + 1] = buildRecord(fixture, #records + 1)
 	end
 
