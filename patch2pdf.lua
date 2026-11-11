@@ -1,6 +1,8 @@
 -- GrandMA3 Patch2PDF - https://github.com/leonreucher/grandma3-patch2pdf
 -- PDF writer based on https://github.com/catseye/pdf.lua
 
+local signalTable, pluginComponent = select(3, ...)
+
 ---------------------------------------------------------------------------
 -- PDF creation part
 ---------------------------------------------------------------------------
@@ -610,7 +612,343 @@ local function joinPath(dir, file)
 	return dir .. "/" .. file
 end
 
+-- Native UI references and implementation notes are listed in README.md.
+-- Each invocation owns its overlay and callback table, including when cancelled.
+local menuSerial = 0
+local function showExportMenu(display, options)
+	local overlay = display.ScreenOverlay
+	-- Keep numeric layout values locally: UI dimension getters can return
+	-- formatted values (or nil before initialization), rather than numbers.
+	local menuWidth = math.max(320, math.min(960, (tonumber(display.W) or 1024) - 40))
+	local menuHeight = math.max(360, math.min(760, (tonumber(display.H) or 800) - 40))
+	local root, result, callbackError
+	local actions, pages, tabs, refreshers = {}, {}, {}, {}
+	local selectors = {
+		Drive = options.defaultDrive, Format = 1, ["Export Filter"] = 1,
+		Paper = 1, Orientation = 1, Sort = 1, Grouping = 1,
+		["Include Multipatch"] = 1, ["Skip unpatched"] = 1,
+	}
+	local stages = {}
+	for _, stage in ipairs(options.stages) do stages[stage.label] = true end
+	local refresh, showPage
+	local fileInput, authorInput, summary, exportButton
+	local activePage = 1
+	menuSerial = menuSerial + 1
+	local eventName = "Patch2PDFMenu" .. menuSerial
+
+	local function close()
+		if root and IsObjectValid(root) then overlay:Delete(root:Index()) end
+	end
+
+	-- All signals are scoped to this component; no global functions or show objects.
+	signalTable[eventName] = function(caller)
+		if not root or not IsObjectValid(root) then return end
+		local action = actions[HandleToInt(caller)]
+		if action then
+			local ok, err = pcall(action, caller)
+			if not ok then callbackError = tostring(err); close() end
+		end
+	end
+
+	local function bind(control, event, action)
+		control.PluginComponent = pluginComponent
+		control[event] = eventName
+		actions[HandleToInt(control)] = action
+	end
+
+	local function grid(parent, anchor, columns, rows)
+		local item = parent:Append("UILayoutGrid")
+		item.Anchors = anchor
+		item.Columns, item.Rows = columns, rows
+		return item
+	end
+
+	local function fixedRow(parent, index, height)
+		parent[1][index].SizePolicy = "Fixed"
+		parent[1][index].Size = height
+	end
+
+	local function text(parent, anchor, value, font)
+		local item = parent:Append("UIObject")
+		item.Anchors, item.Text = anchor, value
+		item.Font = font or "Regular18"
+		item.BackColor = "Global.Transparent"
+		item.HasHover = "No"
+		item.TextalignmentH = "Left"
+		item.TextAutoAdjust = "Yes"
+		return item
+	end
+
+	local function button(parent, anchor, value, action)
+		local item = parent:Append("Button")
+		item.Anchors, item.Text = anchor, value
+		item.Font = "Medium20"
+		item.TextAutoAdjust = "Yes"
+		item.Margin = "3,3"
+		bind(item, "Clicked", action)
+		return item
+	end
+
+	local function field(parent, row, label)
+		local line = grid(parent, "0," .. row, 2, 1)
+		line[2][1].SizePolicy = "Fixed"
+		line[2][1].Size = math.min(180, math.floor(menuWidth * 0.24))
+		text(line, "0,0", label)
+		return line
+	end
+
+	local function choices(parent, row, key, labels, enabled)
+		local line = field(parent, row, key)
+		local controls = grid(line, "1,0", #labels, 1)
+		for index, label in ipairs(labels) do
+			local control = button(controls, (index - 1) .. ",0", label, function()
+				selectors[key] = index
+				refresh()
+			end)
+			refreshers[#refreshers + 1] = function()
+				control.State = selectors[key] == index and 1 or 0
+				control.Enabled = not enabled or enabled()
+			end
+		end
+	end
+
+	local function dropdown(parent, row, key, items, enabled, displayedValue)
+		local line = field(parent, row, key)
+		local control
+		control = button(line, "1,0", "", function()
+			local labels, current = {}, nil
+			for i, item in ipairs(items) do
+				labels[i] = item.label
+				if item.value == selectors[key] then current = item.label end
+			end
+			local _, choice = PopupInput({
+				title = key, caller = control:GetDisplay(), items = labels,
+				selectedValue = current, add_args = { FilterSupport = "Yes" },
+			})
+			-- Match the returned value rather than a filtered popup's row index.
+			if not IsObjectValid(root) then return end
+			for _, item in ipairs(items) do
+				if item.label == choice then selectors[key] = item.value; break end
+			end
+			refresh()
+		end)
+		refreshers[#refreshers + 1] = function()
+			local value = displayedValue and displayedValue() or selectors[key]
+			for _, item in ipairs(items) do
+				if item.value == value then control.Text = item.label .. "  ..." end
+			end
+			control.Enabled = not enabled or enabled()
+		end
+	end
+
+	local function input(parent, row, label, value)
+		local line = field(parent, row, label)
+		local control = line:Append("LineEdit")
+		control.Anchors, control.Name, control.Message = "1,0", label, label
+		control.Content = tostring(value or "")
+		control.Font = "Medium20"
+		control.Margin = "3,3"
+		control.VKPluginName = "TextInput"
+		control.MaxTextLength = 240
+		bind(control, "TextChanged", function() if refresh then refresh() end end)
+		return control
+	end
+
+	local function selectedStageCount()
+		local count = 0
+		for _, stage in ipairs(options.stages) do
+			if stages[stage.label] then count = count + 1 end
+		end
+		return count
+	end
+
+	local function validation()
+		if selectedStageCount() == 0 then return "Select at least one stage in Fixtures.", 2 end
+		if selectors["Export Filter"] == 2 and SelectionCount() == 0 then
+			return "The current fixture selection is empty.", 2
+		end
+	end
+
+	local ok, err = xpcall(function()
+		root = overlay:Append("BaseInput")
+		root.Name = "Patch2PDFExportMenu"
+		root.W = menuWidth
+		root.H = menuHeight
+		root.Columns, root.Rows = 1, 5
+		root.AutoClose, root.CloseOnEscape = "No", "Yes"
+		root.AlignmentH, root.AlignmentV = "Center", "Center"
+		fixedRow(root, 1, 50)
+		fixedRow(root, 2, 56)
+		root[1][3].SizePolicy = "Stretch"
+		fixedRow(root, 4, 76)
+		fixedRow(root, 5, 62)
+
+		local title = root:Append("TitleBar")
+		title.Anchors, title.Columns, title.Rows = "0,0", 2, 1
+		title[2][2].SizePolicy, title[2][2].Size = "Fixed", 50
+		local heading = title:Append("TitleButton")
+		heading.Anchors, heading.Text = "0,0", "Patch2PDF  /  Patch Export"
+		local dismiss = title:Append("CloseButton")
+		dismiss.Anchors = "1,0"
+
+		local navigation = grid(root, "0,1", 3, 1)
+		local content = root:Append("DialogFrame")
+		content.Anchors, content.Columns, content.Rows = "0,2", 1, 1
+		content.Margin = "8,4"
+
+		-- Each tab has its own scroll area, so smaller displays and long stage lists
+		-- keep the action buttons accessible without reducing touch target sizes.
+		local function page(index, label, heights)
+			tabs[index] = button(navigation, (index - 1) .. ",0", label, function() showPage(index) end)
+			local panel = grid(content, "0,0", 2, 1)
+			panel.Visible = false
+			panel[2][2].SizePolicy, panel[2][2].Size = "Fixed", 20
+			local scroll = panel:Append("ScrollBox")
+			scroll.Name, scroll.Anchors = "PageScroll", "0,0"
+			local bar = panel:Append("ScrollBarV")
+			bar.Anchors, bar.ScrollTarget = "1,0", "../PageScroll"
+			local body = grid(scroll, "0,0", 1, #heights)
+			body.W = "100%"
+			body.AlignmentV = "Top"
+			local height = 0
+			for i, size in ipairs(heights) do fixedRow(body, i, size); height = height + size end
+			body.H = height
+			pages[index] = panel
+			return body
+		end
+
+		local export = page(1, "1  Export", { 38, 56, 50, 56, 56, 56, 68 })
+		text(export, "0,0", "FILE & DESTINATION", "Medium20")
+		choices(export, 1, "Format", { "PDF", "CSV (,)", "CSV (;)" })
+		local formatHint = text(export, "0,2", "")
+		fileInput = input(export, 3, "File name", options.fileName)
+		fileInput.Focus = "InitialFocus"
+		authorInput = input(export, 4, "Author", options.author)
+		dropdown(export, 5, "Drive", options.drives)
+		local destination = text(export, "0,6", "")
+
+		local heights = { 38, 56, 44, 56, 56, 44, 50 }
+		for _ in ipairs(options.stages) do heights[#heights + 1] = 50 end
+		local fixtures = page(2, "2  Fixtures", heights)
+		text(fixtures, "0,0", "FIXTURE SCOPE", "Medium20")
+		choices(fixtures, 1, "Export Filter", { "Complete patch", "Current selection" })
+		local selectionHint = text(fixtures, "0,2", "")
+		choices(fixtures, 3, "Include Multipatch", { "Yes", "No" })
+		choices(fixtures, 4, "Skip unpatched", { "No", "Yes" })
+		local stagesHeading = text(fixtures, "0,5", "", "Medium20")
+		local stageTools = grid(fixtures, "0,6", 2, 1)
+		for index, label in ipairs({ "Select all stages", "Clear stages" }) do
+			button(stageTools, (index - 1) .. ",0", label, function()
+				for _, stage in ipairs(options.stages) do stages[stage.label] = index == 1 end
+				refresh()
+			end)
+		end
+		for i, stage in ipairs(options.stages) do
+			local control = button(fixtures, "0," .. (i + 6), "", function()
+				stages[stage.label] = not stages[stage.label]
+				refresh()
+			end)
+			refreshers[#refreshers + 1] = function()
+				control.Text = (stages[stage.label] and "[x]  " or "[ ]  ") .. stage.label
+				control.State = stages[stage.label] and 1 or 0
+				control.TextalignmentH = "Left"
+			end
+		end
+
+		local layout = page(3, "3  Layout", { 38, 56, 56, 58, 38, 56, 56, 50 })
+		text(layout, "0,0", "ORDER & GROUPING", "Medium20")
+		choices(layout, 1, "Grouping", { "None", "Universe", "Stage" })
+		dropdown(layout, 2, "Sort", {
+			{ label = "Patch window order", value = 1 },
+			{ label = "Fixture ID", value = 2 },
+			{ label = "DMX address", value = 3 },
+		}, function() return selectors.Grouping ~= 2 end,
+			function() return selectors.Grouping == 2 and 3 or selectors.Sort end)
+		local sortHint = text(layout, "0,3", "")
+		text(layout, "0,4", "PDF PAGE", "Medium20")
+		local function isPDF() return selectors.Format == 1 end
+		choices(layout, 5, "Paper", { PAPER[1].name, PAPER[2].name }, isPDF)
+		choices(layout, 6, "Orientation", { "Portrait", "Landscape" }, isPDF)
+		local paperHint = text(layout, "0,7", "")
+
+		summary = text(root, "0,3", "")
+		summary.Margin = "16,4"
+		local footer = grid(root, "0,4", 2, 1)
+		button(footer, "0,0", "Cancel", close)
+		exportButton = button(footer, "1,0", "Export PDF", function()
+			local problem, pageIndex = validation()
+			if problem then showPage(pageIndex); return end
+			result = {
+				selectors = selectors, states = stages,
+				inputs = { ["File name"] = fileInput.Content, Author = authorInput.Content },
+			}
+			close()
+		end)
+		exportButton.BackColor = "Button.BackgroundPlease"
+
+		refresh = function()
+			for _, update in ipairs(refreshers) do update() end
+			local pdf = isPDF()
+			authorInput.Enabled = pdf
+			formatHint.Text = ({
+				"Printable patch sheet. Adjust paper and grouping in Layout.",
+				"Comma-separated UTF-8 data for spreadsheets and other tools.",
+				"Semicolon-separated UTF-8 with BOM for German / European Excel.",
+			})[selectors.Format]
+			local drivePath = options.drivePaths[selectors.Drive] or ""
+			destination.Text = "Destination folder:\n" .. tostring(drivePath)
+			selectionHint.Text = tostring(SelectionCount()) .. " selected items. Selected cells use their parent fixture."
+			local stageCount = selectedStageCount()
+			stagesHeading.Text = "STAGES  /  " .. stageCount .. " of " .. #options.stages .. " selected"
+			if selectors.Grouping == 2 then
+				sortHint.Text = "Universe grouping always uses DMX address order. Your sort choice is kept."
+			elseif selectors.Grouping == 1 then
+				sortHint.Text = "Export one continuous list in the selected sort order."
+			else
+				sortHint.Text = pdf and "Each stage starts on a new page. Sorting applies inside each stage."
+					or "CSV stays a single table. Rows are sorted inside each stage."
+			end
+			paperHint.Text = pdf and "Page settings apply to the PDF document."
+				or "Paper, orientation and author are only used for PDF export."
+			local problem = validation()
+			local format = pdf and "PDF" or "CSV"
+			local name = sanitizeFileName(fileInput.Content, options.fileName) .. (pdf and ".pdf" or ".csv")
+			local scope = selectors["Export Filter"] == 1 and "Complete patch" or "Current selection"
+			summary.Text = problem or (format .. "  |  " .. scope .. "  |  " .. stageCount .. " stages\n" .. name)
+			summary.TextColor = problem and "Global.AlertText" or "Global.Text"
+			exportButton.Text = "Export " .. format
+			exportButton.Enabled = problem == nil
+		end
+		showPage = function(index)
+			activePage = index
+			for i, panel in ipairs(pages) do
+				panel.Visible = i == index
+				tabs[i].State = i == index and 1 or 0
+			end
+			refresh()
+		end
+		showPage(1)
+		root:WaitInit()
+		FindBestFocus(root)
+		local selectionCount = SelectionCount()
+		while IsObjectValid(root) do
+			coroutine.yield(0.1)
+			if IsObjectValid(root) and selectionCount ~= SelectionCount() then
+				selectionCount = SelectionCount()
+				showPage(activePage)
+			end
+		end
+	end, debug.traceback)
+
+	close()
+	signalTable[eventName] = nil
+	if not ok then return nil, err end
+	if callbackError then return nil, callbackError end
+	return result
+end
+
 local function Main(displayHandle, argument)
+	displayHandle = displayHandle or GetFocusDisplay()
 	local display = displayHandle and displayHandle.index or nil
 
 	local function message(title, text)
@@ -628,15 +966,17 @@ local function Main(displayHandle, argument)
 
 	-- Drives: all except old software versions; removable devices preferred
 	local drives = Root().Temp.DriveCollect
-	local driveValues = {}
+	local driveOptions = {}
+	local driveLabels = {}
 	local drivePaths = {}
 	local defaultDrive, firstDrive
 	local driveCount = 0
 	for i, drive in ipairs(drives:Children()) do
 		if drive.drivetype ~= "OldVersion" then
 			local label = tostring(drive.name):gsub("[\r\n]+", " ")
-			if driveValues[label] then label = label .. " (" .. i .. ")" end
-			driveValues[label] = i
+			if driveLabels[label] then label = label .. " (" .. i .. ")" end
+			driveLabels[label] = true
+			driveOptions[#driveOptions + 1] = { label = label, value = i }
 			drivePaths[i] = drive.path
 			driveCount = driveCount + 1
 			firstDrive = firstDrive or i
@@ -653,11 +993,7 @@ local function Main(displayHandle, argument)
 		return
 	end
 
-	local paperValues = {}
-	for i, paper in ipairs(PAPER) do paperValues[paper.name] = i end
-
-	-- Stage filter: "Choose..." opens a second dialog with one checkbox per stage
-	-- (only offered when there is more than one stage)
+	-- Stage choices stay inside the custom menu.
 	local stageList = {}
 	local stageLabels = {}
 	for _, stage in ipairs(Patch().Stages:Children()) do
@@ -667,38 +1003,16 @@ local function Main(displayHandle, argument)
 		stageList[#stageList + 1] = { handle = stage, label = label, name = tostring(stage.name) }
 	end
 
-	-- radio buttons (type 1) only for the first three options, more radio groups
-	-- overflow the pop-up width on onPC; everything else are swipe buttons (type 0)
-	local selectors = {
-		{ name = "Drive",              selectedValue = defaultDrive, values = driveValues,                                          type = 1 },
-		{ name = "Format",             selectedValue = 1, values = { ["PDF"] = 1, ["CSV (,)"] = 2, ["CSV (;)"] = 3 },         type = 1 },
-		{ name = "Export Filter",      selectedValue = 1, values = { ["Complete"] = 1, ["Selection Only"] = 2 },              type = 1 },
-		{ name = "Paper",              selectedValue = 1, values = paperValues,                                               type = 0 },
-		{ name = "Orientation",        selectedValue = 1, values = { ["Portrait"] = 1, ["Landscape"] = 2 },                  type = 0 },
-		{ name = "Sort",               selectedValue = 1, values = { ["Patch Window Order"] = 1, ["FID"] = 2, ["DMX"] = 3 }, type = 0 },
-		{ name = "Grouping",           selectedValue = 1, values = { ["None"] = 1, ["Universe"] = 2, ["Stage"] = 3 },        type = 0 },
-		{ name = "Include Multipatch", selectedValue = 1, values = { ["Yes"] = 1, ["No"] = 2 },                              type = 0 },
-		{ name = "Skip unpatched",     selectedValue = 1, values = { ["No"] = 1, ["Yes"] = 2 },                              type = 0 },
-	}
-	if #stageList > 1 then
-		selectors[#selectors + 1] = { name = "Stages", selectedValue = 1, values = { ["All"] = 1, ["Choose..."] = 2 }, type = 0 }
-	end
-	for i, s in ipairs(selectors) do s.order = i end
-
-	local settings = MessageBox({
-		title = "Patch 2 PDF",
-		message = "Please adjust these settings as needed.",
-		display = display,
-		inputs = {
-			{ value = fileNameSuggestion, name = "File name", order = 1 },
-			{ value = CurrentUser().name, name = "Author", order = 2 },
-		},
-		selectors = selectors,
-		commands = { { value = 1, name = "Export" }, { value = 2, name = "Cancel" } },
+	local settings, menuError = showExportMenu(displayHandle, {
+		drives = driveOptions, drivePaths = drivePaths, defaultDrive = defaultDrive,
+		stages = stageList, fileName = fileNameSuggestion, author = CurrentUser().name,
 	})
-
-	-- Cancel, Escape or closing the pop-up
-	if not settings or settings.result ~= 1 then
+	if menuError then
+		message(pluginName .. " - Error", "The export menu encountered an error.\n" .. tostring(menuError))
+		ErrEcho(pluginName .. ": " .. tostring(menuError))
+		return
+	end
+	if not settings then
 		Printf(pluginName .. " aborted by user.")
 		return
 	end
@@ -719,31 +1033,11 @@ local function Main(displayHandle, argument)
 	local author = inputs["Author"] or ""
 	local drivePath = drivePaths[driveIndex] or drivePaths[defaultDrive]
 
-	-- Selected stages: all, or chosen in a second dialog
-	local chooseStages = (sel["Stages"] or 1) == 2
-	local resultStates = {}
-	if chooseStages then
-		local states = {}
-		for i, st in ipairs(stageList) do
-			states[#states + 1] = { name = st.label, state = true, order = i }
-		end
-		local stageDialog = MessageBox({
-			title = "Patch 2 PDF - Stages",
-			message = "Select the stages to export.",
-			display = display,
-			states = states,
-			commands = { { value = 1, name = "Export" }, { value = 2, name = "Cancel" } },
-		})
-		if not stageDialog or stageDialog.result ~= 1 then
-			Printf(pluginName .. " aborted by user.")
-			return
-		end
-		resultStates = stageDialog.states or {}
-	end
+	local resultStates = settings.states or {}
 	local stageAllowed = {}
 	local selectedStageNames = {}
 	for _, st in ipairs(stageList) do
-		if not chooseStages or resultStates[st.label] ~= false then
+		if resultStates[st.label] ~= false then
 			stageAllowed[#stageAllowed + 1] = st.handle
 			selectedStageNames[#selectedStageNames + 1] = st.name
 		end
